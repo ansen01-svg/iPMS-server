@@ -1,26 +1,24 @@
 import mongoose from "mongoose";
-
-const projectStatus = [
-  "Draft",
-  "Submitted to AEE",
-  "Rejected by AEE",
-  "Submitted to CE",
-  "Rejected by CE",
-  "Submitted to MD",
-  "Rejected by MD",
-  "Submitted to Executing Department",
-  "Rejected by Executing Department",
-  "Approved",
-  "Ongoing",
-  "Pending",
-  "Completed",
-];
+import { projectStatus } from "../utils/constants.js";
 
 const projectSchema = new mongoose.Schema(
   {
-    dateOfProposal: String,
-    projectName: String,
-    description: String,
+    dateOfIssueOfWorkOrder: {
+      type: Date,
+      required: [true, "Date of issue of work order is required"],
+      trim: true,
+    },
+    projectName: {
+      type: String,
+      required: [true, "Project name is required"],
+      min: [5, "Project name must be at least 5 characters"],
+      max: [100, "Project name cannot exceed 100 characters"],
+      trim: true,
+    },
+    description: {
+      type: String,
+      trim: true,
+    },
     hasSubProjects: String,
     fund: String,
     function: String,

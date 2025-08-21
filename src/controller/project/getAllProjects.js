@@ -4,11 +4,6 @@ import Project from "../../models/project.model.js";
 const getAllProjects = async (req, res) => {
   try {
     const user = req.user;
-
-    if (!user) {
-      return res.status(401).json({ success: false, message: "Unauthorized" });
-    }
-
     const userRole = user.designation;
     const userId = user.userId;
 
@@ -45,7 +40,7 @@ const getAllProjects = async (req, res) => {
         );
         break;
 
-      case "Executor":
+      case "EXECUTOR":
         // Filter and return all projects except those with status = "Submitted to AEE", "Submitted to CE" and "Submitted to MD"
         projects = allProjects.filter(
           (project) =>
@@ -55,7 +50,7 @@ const getAllProjects = async (req, res) => {
         );
         break;
 
-      case "Viewer":
+      case "VIEWER":
         // Filter and return only projects with status = "Approved", "Ongoing" and "Completed"
         projects = allProjects.filter(
           (project) =>
@@ -65,7 +60,7 @@ const getAllProjects = async (req, res) => {
         );
         break;
 
-      case "Administrator":
+      case "ADMIN":
         // Return all available projects (same as AEE)
         projects = allProjects;
         break;
