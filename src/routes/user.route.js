@@ -6,6 +6,6 @@ import { requireAdmin } from "../middlewares/auth.middleware.js";
 const router = express.Router();
 
 router.get("/", requireAdmin(), getAllUsers);
-router.post("/create", requireAdmin(), createUser);
+router.post("/", requireAdmin(), createUser);
 
 export default router;

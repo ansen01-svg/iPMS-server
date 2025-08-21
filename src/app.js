@@ -14,6 +14,7 @@ import morgan from "morgan";
 // import xss from "xss-clean";
 
 // Custom middleware and utilities
+import { AppError, errorController } from "./utils/errorHandler.js";
 
 // Routes
 import authRoute from "./routes/auth.route.js";
@@ -94,13 +95,13 @@ app.use(
 );
 app.use(express.static("./public"));
 
-// // Security middleware
+// Security middleware
 // app.use(mongoSanitize()); // NoSQL injection protection
 // app.use(xss()); // XSS protection
 
-// // ----------------------------------------
-// // 5. ROUTES
-// // ----------------------------------------
+// ----------------------------------------
+// 5. ROUTES
+// ----------------------------------------
 
 // // Root route
 app.get("/", (req, res) => {
@@ -117,12 +118,12 @@ app.use("/api/project", projectRoute);
 // ----------------------------------------
 
 // Handle undefined routes
-// app.use((req, res, next) => {
-//   next(new AppError(`Can't find ${req.originalUrl} on this server!`, 404));
-// });
+app.use((req, res, next) => {
+  next(new AppError(`Can't find ${req.originalUrl} on this server!`, 404));
+});
 
-// // Global error handler
-// app.use(errorController);
+// Global error handler
+app.use(errorController);
 
 // ----------------------------------------
 // 7. EXPORTS
