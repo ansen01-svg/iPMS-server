@@ -1,8 +1,8 @@
 import express from "express";
-import createProject from "../controller/project/createProject.js";
-import getAllProjects from "../controller/project/getAllProjects.js";
-import getProjectDropdownOptions from "../controller/project/getDropdownOptions.js";
-import getSingleProjectDetails from "../controller/project/getSingleProjectDetails.js";
+import createProject from "../controller/project/create-project.js";
+import getAllProjects from "../controller/project/get-all-projects.js";
+import getProjectDropdownOptions from "../controller/project/get-dropdown-options.js";
+import getSingleProjectDetails from "../controller/project/get-single-project-details.js";
 import { requireJe, requireLogin } from "../middlewares/auth.middleware.js";
 
 const router = express.Router();

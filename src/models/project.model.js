@@ -99,6 +99,12 @@ const projectSchema = new mongoose.Schema(
       type: Date,
       required: [true, "Date of issue of work order is required"],
     },
+    projectId: {
+      type: String,
+      required: [true, "Project ID is required"],
+      unique: true,
+      index: true,
+    },
     projectName: {
       type: String,
       required: [true, "Project name is required"],
@@ -283,6 +289,14 @@ const projectSchema = new mongoose.Schema(
       },
       default: "Submitted to AEE",
       index: true,
+    },
+
+    // Progress
+    progressPercentage: {
+      type: Number,
+      min: [0, "Progress percentage cannot be less than 0"],
+      max: [100, "Progress percentage cannot exceed 100"],
+      default: 0,
     },
 
     // Additional tracking fields

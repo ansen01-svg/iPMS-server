@@ -10,7 +10,6 @@ const createProject = async (req, res) => {
       fund,
       sanctionAndDepartment,
       budgetHead,
-      executingDepartment,
       beneficiary,
       workOrderNumber,
       estimatedCost,
@@ -50,6 +49,9 @@ const createProject = async (req, res) => {
         });
       }
     }
+
+    const utcTimestamp = Date.now();
+    const projectId = `${typeOfWork}_${utcTimestamp}`;
 
     // Validate geoLocation
     if (
@@ -95,6 +97,7 @@ const createProject = async (req, res) => {
     // Create project
     const project = new Project({
       dateOfIssueOfWorkOrder: new Date(dateOfIssueOfWorkOrder),
+      projectId,
       projectName: projectName.trim(),
       description: description?.trim(),
       hasSubProjects: Boolean(hasSubProjects),
