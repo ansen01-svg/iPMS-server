@@ -21,6 +21,7 @@ const requireAuth = (allowedRoles = []) => {
       }
 
       const verifiedToken = verifyJwt(token);
+
       if (!verifiedToken) {
         return res.status(401).json({
           success: false,
@@ -29,6 +30,7 @@ const requireAuth = (allowedRoles = []) => {
       }
 
       const user = await User.findById(verifiedToken.id);
+
       if (!user) {
         return res.status(401).json({
           success: false,

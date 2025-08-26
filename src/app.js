@@ -8,7 +8,6 @@ import cors from "cors";
 import * as dotenv from "dotenv";
 import express from "express";
 // import mongoSanitize from "express-mongo-sanitize";
-import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import morgan from "morgan";
 // import xss from "xss-clean";
@@ -17,6 +16,7 @@ import morgan from "morgan";
 import { AppError, errorController } from "./utils/errorHandler.js";
 
 // Routes
+import archiveProjectRoute from "./routes/archive-project.route.js";
 import authRoute from "./routes/auth.route.js";
 import projectRoute from "./routes/project.route.js";
 import userRoute from "./routes/user.route.js";
@@ -67,12 +67,12 @@ process.on("unhandledRejection", (err) => {
 
 // Security and request parsing
 app.use(cors(corsOptions));
-app.use(
-  rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: 60,
-  })
-);
+// app.use(
+//   rateLimit({
+//     windowMs: 15 * 60 * 1000,
+//     limit: 60,
+//   })
+// );
 app.use(helmet()); // Set security HTTP headers
 app.use(morgan("tiny")); // API logging for development
 
@@ -112,6 +112,7 @@ app.get("/", (req, res) => {
 app.use("/api/auth", authRoute);
 app.use("/api/user", userRoute);
 app.use("/api/project", projectRoute);
+app.use("/api/archive-project", archiveProjectRoute);
 
 // ----------------------------------------
 // 6. ERROR HANDLING (APPLICATION LEVEL)

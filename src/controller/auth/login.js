@@ -51,20 +51,46 @@ const login = async (req, res) => {
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "1h" });
 
     // Set token in cookie
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
-      domain: process.env.NODE_ENV === "production" ? ".aptdcl.in" : undefined,
-      maxAge: 3600000, // 1 hour
-    });
+    // res.cookie("token", token, {
+    //   httpOnly: true,
+    //   secure: process.env.NODE_ENV === "production",
+    //   sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+    //   domain: process.env.NODE_ENV === "production" ? ".aptdcl.in" : undefined,
+    //   maxAge: 3600000, // 1 hour
+    // });
 
     // Determine message and requirePasswordChange based on first login status
     const message = user.isFirstLogin
       ? "First login - Please change your password"
       : "Login successful";
 
-    console.log(user.designation);
+    // Method 1: Standard cookie
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 24 * 60 * 60 * 1000,
+      path: "/",
+    });
+
+    // Method 2: More restrictive
+    res.cookie("backup-token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict", // More restrictive
+      maxAge: 24 * 60 * 60 * 1000,
+      path: "/",
+    });
+
+    // Method 3: Base64 encoded - Helps with encoding issues
+    const encodedToken = Buffer.from(token).toString("base64");
+    res.cookie("encoded-token", encodedToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 24 * 60 * 60 * 1000,
+      path: "/",
+    });
 
     res.status(200).json({
       success: true,
