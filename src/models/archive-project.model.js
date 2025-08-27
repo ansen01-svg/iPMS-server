@@ -1,5 +1,84 @@
 import mongoose from "mongoose";
 
+// Schema for individual progress updates
+const progressUpdateSchema = new mongoose.Schema(
+  {
+    previousProgress: {
+      type: Number,
+      min: [0, "Progress cannot be negative"],
+      max: [100, "Progress cannot exceed 100%"],
+      required: true,
+    },
+    newProgress: {
+      type: Number,
+      min: [0, "Progress cannot be negative"],
+      max: [100, "Progress cannot exceed 100%"],
+      required: true,
+    },
+    progressDifference: {
+      type: Number,
+      required: true,
+    },
+    remarks: {
+      type: String,
+      maxlength: [500, "Remarks cannot exceed 500 characters"],
+      trim: true,
+    },
+    supportingDocuments: [
+      {
+        fileName: {
+          type: String,
+          required: true,
+        },
+        originalName: {
+          type: String,
+          required: true,
+        },
+        filePath: {
+          type: String,
+          required: true,
+        },
+        fileSize: {
+          type: Number,
+          required: true,
+        },
+        mimeType: {
+          type: String,
+          required: true,
+        },
+        fileType: {
+          type: String,
+          enum: ["document", "image"],
+          required: true,
+        },
+        uploadedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
+    updatedBy: {
+      userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        required: true,
+      },
+      userName: {
+        type: String,
+        required: true,
+      },
+      userDesignation: {
+        type: String,
+        required: true,
+      },
+    },
+    ipAddress: String,
+    userAgent: String,
+  },
+  {
+    timestamps: true,
+  }
+);
+
 const archiveProjectSchema = new mongoose.Schema(
   {
     projectId: {
@@ -12,13 +91,13 @@ const archiveProjectSchema = new mongoose.Schema(
       type: String,
       required: [true, "Financial year is required"],
       match: [/^\d{4}-\d{4}$/, "Financial year must be in YYYY-YYYY format"],
-      index: true, // Added index for frequent queries
+      index: true,
     },
     AANumber: {
       type: String,
       required: [true, "A.A no. is required"],
       trim: true,
-      index: true, // Added index for administrative approval lookups
+      index: true,
     },
     AAAmount: {
       type: Number,
@@ -93,6 +172,21 @@ const archiveProjectSchema = new mongoose.Schema(
       maxlength: [500, "Remarks cannot exceed 500 characters"],
       trim: true,
     },
+
+    // Progress updates
+    progressUpdates: [progressUpdateSchema],
+
+    // Track last progress update
+    lastProgressUpdate: {
+      type: Date,
+      default: null,
+    },
+
+    // Track if project allows progress updates
+    progressUpdatesEnabled: {
+      type: Boolean,
+      default: true,
+    },
   },
   {
     timestamps: true,
@@ -101,17 +195,21 @@ const archiveProjectSchema = new mongoose.Schema(
   }
 );
 
-// Compound Indexes for common query patterns
-archiveProjectSchema.index({ financialYear: 1, concernedEngineer: 1 }); // Projects by year and engineer
-archiveProjectSchema.index({ financialYear: 1, nameOfContractor: 1 }); // Projects by year and contractor
-archiveProjectSchema.index({ financialYear: 1, location: 1 }); // Projects by year and location
-archiveProjectSchema.index({ concernedEngineer: 1, progress: 1 }); // Engineer's projects by progress
-archiveProjectSchema.index({ workValue: -1, financialYear: 1 }); // High-value projects by year
-archiveProjectSchema.index({ FWODate: -1 }); // Recent FWO orders
-archiveProjectSchema.index({ AADated: -1 }); // Recent administrative approvals
-archiveProjectSchema.index({ createdAt: -1 }); // Recently created records
+// Existing indexes
+archiveProjectSchema.index({ financialYear: 1, concernedEngineer: 1 });
+archiveProjectSchema.index({ financialYear: 1, nameOfContractor: 1 });
+archiveProjectSchema.index({ financialYear: 1, location: 1 });
+archiveProjectSchema.index({ concernedEngineer: 1, progress: 1 });
+archiveProjectSchema.index({ workValue: -1, financialYear: 1 });
+archiveProjectSchema.index({ FWODate: -1 });
+archiveProjectSchema.index({ AADated: -1 });
+archiveProjectSchema.index({ createdAt: -1 });
 
-// Text Index for searching across multiple text fields
+// New indexes for progress updates
+archiveProjectSchema.index({ "progressUpdates.createdAt": -1 });
+archiveProjectSchema.index({ lastProgressUpdate: -1 });
+
+// Text Index for searching
 archiveProjectSchema.index({
   nameOfWork: "text",
   nameOfContractor: "text",
@@ -119,7 +217,7 @@ archiveProjectSchema.index({
   remarks: "text",
 });
 
-// Virtual for calculating remaining work value
+// Existing virtuals
 archiveProjectSchema.virtual("remainingWorkValue").get(function () {
   if (this.billSubmittedAmount && this.workValue) {
     return this.workValue - this.billSubmittedAmount;
@@ -127,7 +225,6 @@ archiveProjectSchema.virtual("remainingWorkValue").get(function () {
   return this.workValue;
 });
 
-// Virtual for progress status
 archiveProjectSchema.virtual("progressStatus").get(function () {
   if (!this.progress) return "Not Started";
   if (this.progress < 25) return "Just Started";
@@ -137,9 +234,20 @@ archiveProjectSchema.virtual("progressStatus").get(function () {
   return "Completed";
 });
 
-// Pre-save middleware to ensure data consistency
+// New virtuals for progress updates
+archiveProjectSchema.virtual("totalProgressUpdates").get(function () {
+  return this.progressUpdates ? this.progressUpdates.length : 0;
+});
+
+archiveProjectSchema.virtual("latestProgressUpdate").get(function () {
+  if (this.progressUpdates && this.progressUpdates.length > 0) {
+    return this.progressUpdates[this.progressUpdates.length - 1];
+  }
+  return null;
+});
+
+// Pre-save middleware
 archiveProjectSchema.pre("save", function (next) {
-  // Ensure bill submitted amount doesn't exceed work value
   if (
     this.billSubmittedAmount &&
     this.workValue &&
@@ -148,7 +256,6 @@ archiveProjectSchema.pre("save", function (next) {
     next(new Error("Bill submitted amount cannot exceed work value"));
   }
 
-  // Ensure AA date is not in the future
   if (this.AADated > new Date()) {
     next(new Error("A.A date cannot be in the future"));
   }
@@ -156,12 +263,11 @@ archiveProjectSchema.pre("save", function (next) {
   next();
 });
 
-// Static method to find projects by financial year
+// Static methods
 archiveProjectSchema.statics.findByFinancialYear = function (year) {
   return this.find({ financialYear: year });
 };
 
-// Static method to find projects by engineer with pagination
 archiveProjectSchema.statics.findByEngineer = function (
   engineerName,
   page = 1,
@@ -174,10 +280,81 @@ archiveProjectSchema.statics.findByEngineer = function (
     .limit(limit);
 };
 
-// Instance method to calculate completion percentage based on bill amount
+// New static method for progress update statistics
+archiveProjectSchema.statics.getProgressUpdateStats = function (filter = {}) {
+  return this.aggregate([
+    { $match: filter },
+    { $unwind: "$progressUpdates" },
+    {
+      $group: {
+        _id: null,
+        totalUpdates: { $sum: 1 },
+        avgProgressIncrease: { $avg: "$progressUpdates.progressDifference" },
+        maxProgressIncrease: { $max: "$progressUpdates.progressDifference" },
+        minProgressIncrease: { $min: "$progressUpdates.progressDifference" },
+        totalFilesUploaded: {
+          $sum: { $size: "$progressUpdates.supportingDocuments" },
+        },
+      },
+    },
+  ]);
+};
+
+// Instance methods
 archiveProjectSchema.methods.calculateFinancialProgress = function () {
   if (!this.billSubmittedAmount || !this.workValue) return 0;
   return Math.round((this.billSubmittedAmount / this.workValue) * 100);
+};
+
+// New instance method to add progress update
+archiveProjectSchema.methods.addProgressUpdate = function (
+  updateData,
+  userInfo
+) {
+  const previousProgress = this.progress;
+  const newProgress = updateData.newProgress;
+  const progressDifference = newProgress - previousProgress;
+
+  const progressUpdate = {
+    previousProgress,
+    newProgress,
+    progressDifference,
+    remarks: updateData.remarks,
+    supportingDocuments: updateData.supportingDocuments || [],
+    updatedBy: {
+      userId: userInfo.userId,
+      userName: userInfo.userName,
+      userDesignation: userInfo.userDesignation,
+    },
+    ipAddress: updateData.ipAddress,
+    userAgent: updateData.userAgent,
+  };
+
+  this.progressUpdates.push(progressUpdate);
+  this.progress = newProgress;
+  this.lastProgressUpdate = new Date();
+
+  return this.save();
+};
+
+// New instance method to get progress update history with pagination
+archiveProjectSchema.methods.getProgressUpdateHistory = function (
+  page = 1,
+  limit = 10
+) {
+  const skip = (page - 1) * limit;
+  const updates = this.progressUpdates
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(skip, skip + limit);
+
+  return {
+    updates,
+    totalUpdates: this.progressUpdates.length,
+    currentPage: page,
+    totalPages: Math.ceil(this.progressUpdates.length / limit),
+    hasNextPage: page < Math.ceil(this.progressUpdates.length / limit),
+    hasPrevPage: page > 1,
+  };
 };
 
 const ArchiveProject = mongoose.model("ArchiveProject", archiveProjectSchema);
