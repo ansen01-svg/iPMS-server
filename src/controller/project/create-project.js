@@ -26,6 +26,9 @@ const createProject = async (req, res) => {
       uploadedFiles,
     } = req.body;
 
+    console.log(subProjects);
+    console.log(uploadedFiles[0]);
+
     // Validate required fields
     const requiredFields = {
       dateOfIssueOfWorkOrder: "Date of issue of work order is required",
@@ -87,7 +90,7 @@ const createProject = async (req, res) => {
       }
     }
 
-    if (!req.user || req.user !== "JE") {
+    if (!req.user || req.user.designation !== "JE") {
       return res.status(401).json({
         success: false,
         message: "User authentication required",
