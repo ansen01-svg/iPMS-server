@@ -9,7 +9,7 @@ const router = express.Router();
 
 router.get("/", requireLogin(), getAllProjects);
 router.post("/", requireJe(), createProject);
-router.get("/dropdown-options", requireJe(), getProjectDropdownOptions);
+router.get("/dropdown-options", getProjectDropdownOptions);
 router.get("/:projectId", requireLogin(), getSingleProjectDetails);
 
 export default router;

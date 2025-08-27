@@ -44,7 +44,7 @@ const login = async (req, res) => {
       role: user.designation,
       email: user.email,
       name: user.fullName || "Incomplete User",
-      departmentId: user.departmentId,
+      departmentName: user.departmentName || "Unknown Department",
     };
 
     // Sign JWT token
@@ -100,12 +100,11 @@ const login = async (req, res) => {
       user: {
         id: user._id,
         userId: user.userId,
-        fullName: user.fullName,
+        name: user.fullName,
         username: user.username,
         email: user.email,
         role: user.designation,
         departmentName: user.departmentName,
-        officeLocation: user.officeLocation,
       },
     });
   } catch (error) {
