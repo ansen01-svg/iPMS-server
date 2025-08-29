@@ -1,10 +1,12 @@
+import ArchiveProject from "../../models/archive-project.model.js";
 import MeasurementBook from "../../models/mb.model.js";
 
-const getAllMeasurementBooks = async (req, res) => {
+const getMeasurementBooks = async (req, res) => {
   try {
+    const { projectId } = req.params;
     const {
       page = 1,
-      limit = 20,
+      limit = 10,
       sortBy = "createdAt",
       sortOrder = "desc",
       search,
@@ -12,8 +14,15 @@ const getAllMeasurementBooks = async (req, res) => {
       dateTo,
       hasRemarks,
       isApproved,
-      projectId, // Optional filter for specific project
     } = req.query;
+
+    // Validate project ID format
+    if (!projectId || projectId.length !== 24) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid project ID format",
+      });
+    }
 
     // Check if user is authenticated
     if (!req.user) {
@@ -23,19 +32,17 @@ const getAllMeasurementBooks = async (req, res) => {
       });
     }
 
-    // Build query
-    let query = {};
-
-    // Add project filter if specified
-    if (projectId && projectId !== "all") {
-      if (projectId.length !== 24) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid project ID format",
-        });
-      }
-      query.project = projectId;
+    // Validate that project exists
+    const project = await ArchiveProject.findById(projectId);
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        message: "Project not found",
+      });
     }
+
+    // Build query
+    let query = { project: projectId };
 
     // Add search functionality (uses text index from schema)
     if (search && search.trim()) {
@@ -102,89 +109,30 @@ const getAllMeasurementBooks = async (req, res) => {
     }
 
     // Execute queries in parallel for better performance
-    const [measurementBooks, totalCount, projectStats] = await Promise.all([
-      // Get measurement books with project details
+    const [measurementBooks, totalCount] = await Promise.all([
       MeasurementBook.find(query)
         .populate(
           "project",
-          "projectName workOrderNumber estimatedCost district state"
+          "projectName workOrderNumber estimatedCost district"
         )
         .sort({ [sortBy]: sortOrderValue })
         .skip(skip)
         .limit(limitNumber)
-        .lean(),
-
-      // Get total count
+        .lean(), // Use lean() for better performance
       MeasurementBook.countDocuments(query),
-
-      // Get project-wise statistics
-      MeasurementBook.aggregate([
-        { $match: query },
-        {
-          $group: {
-            _id: "$project",
-            count: { $sum: 1 },
-            totalFileSize: { $sum: "$uploadedFile.fileSize" },
-            approvedCount: {
-              $sum: { $cond: [{ $ne: ["$approvedBy", null] }, 1, 0] },
-            },
-            withRemarksCount: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $ne: ["$remarks", null] },
-                      { $ne: ["$remarks", ""] },
-                    ],
-                  },
-                  1,
-                  0,
-                ],
-              },
-            },
-          },
-        },
-        {
-          $lookup: {
-            from: "archiveprojects", // Adjust collection name as needed
-            localField: "_id",
-            foreignField: "_id",
-            as: "projectInfo",
-          },
-        },
-        {
-          $project: {
-            _id: 1,
-            count: 1,
-            totalFileSize: 1,
-            approvedCount: 1,
-            withRemarksCount: 1,
-            projectName: { $arrayElemAt: ["$projectInfo.projectName", 0] },
-            workOrderNumber: {
-              $arrayElemAt: ["$projectInfo.workOrderNumber", 0],
-            },
-          },
-        },
-        { $sort: { count: -1 } },
-      ]),
     ]);
 
     // Calculate pagination metadata
     const totalPages = Math.ceil(totalCount / limitNumber);
 
-    // Get overall summary statistics
-    const overallStats = await MeasurementBook.aggregate([
-      { $match: query },
+    // Get summary statistics
+    const summaryStats = await MeasurementBook.aggregate([
+      { $match: { project: project._id } },
       {
         $group: {
           _id: null,
-          totalMBs: { $sum: 1 },
-          totalFileSize: { $sum: "$uploadedFile.fileSize" },
-          avgFileSize: { $avg: "$uploadedFile.fileSize" },
-          approvedMBs: {
-            $sum: { $cond: [{ $ne: ["$approvedBy", null] }, 1, 0] },
-          },
-          mbsWithRemarks: {
+          total: { $sum: 1 },
+          withRemarks: {
             $sum: {
               $cond: [
                 {
@@ -198,28 +146,23 @@ const getAllMeasurementBooks = async (req, res) => {
               ],
             },
           },
-          uniqueProjects: { $addToSet: "$project" },
-        },
-      },
-      {
-        $project: {
-          totalMBs: 1,
-          totalFileSize: 1,
-          avgFileSize: 1,
-          approvedMBs: 1,
-          mbsWithRemarks: 1,
-          uniqueProjectCount: { $size: "$uniqueProjects" },
+          approved: {
+            $sum: {
+              $cond: [{ $ne: ["$approvedBy", null] }, 1, 0],
+            },
+          },
+          totalFileSize: { $sum: "$uploadedFile.fileSize" },
+          avgFileSize: { $avg: "$uploadedFile.fileSize" },
         },
       },
     ]);
 
-    const summary = overallStats[0] || {
-      totalMBs: 0,
+    const stats = summaryStats[0] || {
+      total: 0,
+      withRemarks: 0,
+      approved: 0,
       totalFileSize: 0,
       avgFileSize: 0,
-      approvedMBs: 0,
-      mbsWithRemarks: 0,
-      uniqueProjectCount: 0,
     };
 
     res.json({
@@ -234,37 +177,30 @@ const getAllMeasurementBooks = async (req, res) => {
           hasPrevPage: pageNumber > 1,
           limit: limitNumber,
         },
-        summary: {
-          totalMBs: summary.totalMBs,
-          uniqueProjects: summary.uniqueProjectCount,
-          approvedMBs: summary.approvedMBs,
-          mbsWithRemarks: summary.mbsWithRemarks,
-          approvalRate:
-            summary.totalMBs > 0
-              ? Math.round((summary.approvedMBs / summary.totalMBs) * 100)
-              : 0,
-          remarksRate:
-            summary.totalMBs > 0
-              ? Math.round((summary.mbsWithRemarks / summary.totalMBs) * 100)
-              : 0,
-          totalFileSize: summary.totalFileSize,
-          avgFileSize: Math.round(summary.avgFileSize || 0),
-          humanReadableTotalSize: formatFileSize(summary.totalFileSize || 0),
-          humanReadableAvgSize: formatFileSize(summary.avgFileSize || 0),
+        project: {
+          id: project._id,
+          projectName: project.projectName,
+          workOrderNumber: project.workOrderNumber,
         },
-        projectStats: projectStats.slice(0, 10), // Top 10 projects by MB count
+        summary: {
+          totalMBs: stats.total,
+          withRemarks: stats.withRemarks,
+          approved: stats.approved,
+          totalFileSize: stats.totalFileSize,
+          avgFileSize: Math.round(stats.avgFileSize || 0),
+          humanReadableTotalSize: formatFileSize(stats.totalFileSize || 0),
+        },
         filters: {
           search: search || null,
           dateFrom: dateFrom || null,
           dateTo: dateTo || null,
           hasRemarks: hasRemarks || null,
           isApproved: isApproved || null,
-          projectId: projectId || null,
         },
       },
     });
   } catch (error) {
-    console.error("Error fetching all Measurement Books:", error);
+    console.error("Error fetching Measurement Books:", error);
 
     // Handle cast errors
     if (error.name === "CastError") {
@@ -291,4 +227,4 @@ const formatFileSize = (bytes) => {
   return Math.round((bytes / Math.pow(1024, i)) * 100) / 100 + " " + sizes[i];
 };
 
-export default getAllMeasurementBooks;
+export default getMeasurementBooks;

@@ -1,129 +1,248 @@
-// src/middlewares/file-upload.middleware.js
-import fs from "fs";
 import multer from "multer";
-import path from "path";
+import {
+  deleteMultipleFilesFromFirebase,
+  uploadMultipleFilesToFirebase,
+  validateFile,
+} from "../utils/firebase.js";
 
-// Ensure upload directory exists
-const uploadDir = "uploads/measurement-books";
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+// Configure multer to store files in memory for Firebase upload
+const storage = multer.memoryStorage();
 
-// Configure multer storage
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    // Generate unique filename
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    const fileExtension = path.extname(file.originalname);
-    const fileName = `mb-${uniqueSuffix}${fileExtension}`;
-    cb(null, fileName);
-  },
-});
+// File filter function for MB files
+const mbFileFilter = (req, file, cb) => {
+  try {
+    const validation = validateFile(file);
 
-// File filter function
-const fileFilter = (req, file, cb) => {
-  // Check file type
-  const allowedTypes = [
-    "application/pdf",
-    "image/jpeg",
-    "image/jpg",
-    "image/png",
-  ];
+    if (!validation.isValid) {
+      const error = new Error(validation.errors.join(", "));
+      error.code = "INVALID_FILE";
+      return cb(error, false);
+    }
 
-  if (allowedTypes.includes(file.mimetype)) {
+    // Specific validation for MB files - only allow PDF and images
+    const allowedMimeTypes = [
+      "application/pdf",
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/webp",
+    ];
+
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      const error = new Error(
+        "Only PDF, JPEG, JPG, PNG, and WebP files are allowed for Measurement Books"
+      );
+      error.code = "INVALID_FILE_TYPE";
+      return cb(error, false);
+    }
+
+    // Add file category for later use
+    const fileCategory = file.mimetype.startsWith("image/")
+      ? "image"
+      : "document";
+    file.fileCategory = fileCategory;
+
+    console.log(`MB File accepted: ${file.originalname} (${file.mimetype})`);
     cb(null, true);
-  } else {
-    cb(new Error("Only PDF, JPG, JPEG, and PNG files are allowed"), false);
+  } catch (error) {
+    console.error("Error in MB file filter:", error);
+    cb(error, false);
   }
 };
 
-// Configure multer
-const upload = multer({
-  storage: storage,
+// Multer configuration specifically for MB uploads
+const mbUpload = multer({
+  storage,
+  fileFilter: mbFileFilter,
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB limit
+    fileSize: 10 * 1024 * 1024, // 10MB per file
+    files: 1, // Only one file allowed per MB
   },
-  fileFilter: fileFilter,
 });
 
-// Middleware to handle single file upload for MB
-export const uploadMBFile = upload.single("mbFile");
+/**
+ * Middleware for uploading single MB file to Firebase Storage
+ */
+export const mbFileUpload = async (req, res, next) => {
+  // Use multer to parse the single file
+  const multerMiddleware = mbUpload.single("mbFile");
 
-// Error handling middleware for multer
-export const handleUploadError = (error, req, res, next) => {
+  multerMiddleware(req, res, async (multerError) => {
+    if (multerError) {
+      return handleMBUploadErrors(multerError, req, res, next);
+    }
+
+    try {
+      // File is required for MB creation
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: "Measurement Book file is required",
+          details: {
+            expectedField: "mbFile",
+            allowedTypes: ["PDF", "JPEG", "JPG", "PNG", "WebP"],
+          },
+        });
+      }
+
+      // Create folder path for MB files
+      const projectId = req.body.project || "general";
+      const mbFolder = createMBFolder(projectId);
+
+      console.log(`Uploading MB file to Firebase folder: ${mbFolder}`);
+
+      // Upload file to Firebase (single file)
+      const uploadedFiles = await uploadMultipleFilesToFirebase(
+        [req.file],
+        mbFolder
+      );
+
+      if (!uploadedFiles || uploadedFiles.length === 0) {
+        throw new Error("Failed to upload file to Firebase");
+      }
+
+      const uploadedFile = uploadedFiles[0];
+
+      // Process and attach to request body for controller use
+      req.body.uploadedFile = {
+        fileName: uploadedFile.fileName,
+        originalName: uploadedFile.originalName,
+        downloadURL: uploadedFile.downloadURL,
+        filePath: uploadedFile.filePath,
+        fileSize: uploadedFile.fileSize,
+        mimeType: uploadedFile.mimeType,
+        fileType: uploadedFile.mimeType.startsWith("image/")
+          ? "image"
+          : "document",
+      };
+
+      console.log(
+        `Successfully uploaded MB file: ${uploadedFile.originalName}`
+      );
+      next();
+    } catch (error) {
+      console.error("Error uploading MB file to Firebase:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload measurement book file to cloud storage",
+        details: {
+          error: error.message,
+          errorCode: "FIREBASE_UPLOAD_ERROR",
+        },
+      });
+    }
+  });
+};
+
+/**
+ * Create folder path for MB files
+ * @param {string} projectId - Project ID
+ * @returns {string} - Complete folder path
+ */
+const createMBFolder = (projectId) => {
+  const dateFolder = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+  return `measurement-books/${projectId}/${dateFolder}`;
+};
+
+/**
+ * Error handling for MB file uploads
+ */
+const handleMBUploadErrors = (error, req, res, next) => {
+  console.error("MB Upload error:", error);
+
   if (error instanceof multer.MulterError) {
-    if (error.code === "LIMIT_FILE_SIZE") {
-      return res.status(400).json({
-        success: false,
-        message: "File size too large. Maximum size allowed is 50MB",
-      });
-    }
-    if (error.code === "LIMIT_UNEXPECTED_FILE") {
-      return res.status(400).json({
-        success: false,
-        message: "Unexpected field name. Please use 'mbFile' as the field name",
-      });
-    }
-  }
+    switch (error.code) {
+      case "LIMIT_FILE_SIZE":
+        return res.status(400).json({
+          success: false,
+          message: "File size too large. Maximum size allowed is 10MB.",
+          details: {
+            maxSize: "10MB",
+            errorCode: "FILE_TOO_LARGE",
+          },
+        });
 
-  if (
-    error.message.includes("Only PDF, JPG, JPEG, and PNG files are allowed")
-  ) {
+      case "LIMIT_UNEXPECTED_FILE":
+        return res.status(400).json({
+          success: false,
+          message: 'Use "mbFile" field name for measurement book file upload.',
+          details: {
+            expectedFieldName: "mbFile",
+            errorCode: "UNEXPECTED_FIELD",
+          },
+        });
+
+      default:
+        return res.status(400).json({
+          success: false,
+          message: "File upload error occurred.",
+          details: {
+            error: error.message,
+            errorCode: "UPLOAD_ERROR",
+          },
+        });
+    }
+  } else if (error && error.code === "INVALID_FILE_TYPE") {
     return res.status(400).json({
       success: false,
-      message:
-        "Invalid file type. Only PDF, JPG, JPEG, and PNG files are allowed",
+      message: error.message,
+      details: {
+        allowedTypes: ["PDF", "JPEG", "JPG", "PNG", "WebP"],
+        errorCode: "INVALID_FILE_TYPE",
+      },
+    });
+  } else if (error && error.code === "INVALID_FILE") {
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+      details: {
+        allowedTypes: ["PDF", "JPEG", "JPG", "PNG", "WebP"],
+        errorCode: "INVALID_FILE",
+      },
     });
   }
 
   next(error);
 };
 
-// Middleware to process uploaded file and add to req.body
-export const processUploadedFile = (req, res, next) => {
-  if (!req.file) {
-    return res.status(400).json({
-      success: false,
-      message: "No file uploaded",
-    });
-  }
+/**
+ * Cleanup middleware for MB files in case of errors
+ */
+export const cleanupMBFile = async (req, res, next) => {
+  const originalSend = res.send;
+  const originalJson = res.json;
 
-  // Get file extension to determine type
-  const fileExtension = path
-    .extname(req.file.originalname)
-    .toLowerCase()
-    .slice(1);
+  // Override response methods to detect errors
+  res.send = function (data) {
+    if (res.statusCode >= 400 && req.body.uploadedFile) {
+      // Error response, cleanup uploaded file
+      deleteMultipleFilesFromFirebase([req.body.uploadedFile.filePath]).catch(
+        (error) => {
+          console.error(
+            "Error cleaning up MB file after error response:",
+            error
+          );
+        }
+      );
+    }
+    originalSend.call(this, data);
+  };
 
-  // Add file details to req.body for controller to use
-  req.body.uploadedFile = {
-    fileName: req.file.filename,
-    originalName: req.file.originalname,
-    fileType: fileExtension,
-    fileSize: req.file.size,
-    filePath: req.file.path,
-    mimeType: req.file.mimetype,
+  res.json = function (data) {
+    if (res.statusCode >= 400 && req.body.uploadedFile) {
+      // Error response, cleanup uploaded file
+      deleteMultipleFilesFromFirebase([req.body.uploadedFile.filePath]).catch(
+        (error) => {
+          console.error(
+            "Error cleaning up MB file after error response:",
+            error
+          );
+        }
+      );
+    }
+    originalJson.call(this, data);
   };
 
   next();
-};
-
-// Combined middleware for MB file upload
-export const mbFileUpload = [
-  uploadMBFile,
-  handleUploadError,
-  processUploadedFile,
-];
-
-// Utility function to delete uploaded file (useful for cleanup on errors)
-export const deleteUploadedFile = (filePath) => {
-  try {
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
-  } catch (error) {
-    console.error("Error deleting file:", error);
-  }
 };

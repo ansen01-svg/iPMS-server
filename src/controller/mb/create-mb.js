@@ -4,49 +4,38 @@ import MeasurementBook from "../../models/mb.model.js";
 const createMeasurementBook = async (req, res) => {
   try {
     const {
-      projectId,
-      title,
+      project,
       description,
-      mbNumber,
-      measurementDate,
-      workOrderNumber,
-      contractorName,
       remarks,
-      uploadedFile, // Expecting file details from file upload middleware
+      uploadedFile, // This comes from the Firebase middleware
     } = req.body;
 
-    // Validate required fields
-    const requiredFields = {
-      projectId: "Project ID is required",
-      title: "Title is required",
-      description: "Description is required",
-      mbNumber: "MB number is required",
-      measurementDate: "Measurement date is required",
-    };
-
-    for (const [field, message] of Object.entries(requiredFields)) {
-      if (!req.body[field]) {
-        return res.status(400).json({
-          success: false,
-          message: message,
-        });
-      }
+    // Validate required fields based on schema
+    if (!project) {
+      return res.status(400).json({
+        success: false,
+        message: "Project reference is required",
+      });
     }
 
-    // Validate uploaded file
+    if (!description) {
+      return res.status(400).json({
+        success: false,
+        message: "Description is required",
+      });
+    }
+
+    // Validate uploaded file (should be set by middleware)
     if (!uploadedFile) {
       return res.status(400).json({
         success: false,
         message: "File upload is required",
       });
     }
-    console.log(projectId);
 
     // Check if project exists
-    const project = await ArchiveProject.findById({ _id: projectId });
-    console.log(project);
-
-    if (!project) {
+    const existingProject = await ArchiveProject.findById(project);
+    if (!existingProject) {
       return res.status(404).json({
         success: false,
         message: "Project not found",
@@ -61,60 +50,35 @@ const createMeasurementBook = async (req, res) => {
       });
     }
 
-    // Validate file type
-    const allowedFileTypes = ["pdf", "jpg", "jpeg", "png"];
-    if (!allowedFileTypes.includes(uploadedFile.fileType.toLowerCase())) {
-      return res.status(400).json({
-        success: false,
-        message: "Only PDF, JPG, JPEG, and PNG files are allowed",
-      });
-    }
-
-    // Check for duplicate MB number within the same project
-    const existingMB = await MeasurementBook.findOne({
-      projectId,
-      mbNumber: mbNumber.trim(),
-    });
-
-    if (existingMB) {
-      return res.status(409).json({
-        success: false,
-        message: "MB number already exists for this project",
-      });
-    }
-
-    // Create new Measurement Book
+    // Create new Measurement Book based on actual schema
     const measurementBook = new MeasurementBook({
-      projectId,
-      project: project._id,
-      title: title.trim(),
+      project: existingProject._id,
       description: description.trim(),
-      mbNumber: mbNumber.trim(),
-      measurementDate: new Date(measurementDate),
-      workOrderNumber: workOrderNumber?.trim(),
-      contractorName: contractorName?.trim(),
       remarks: remarks?.trim(),
       uploadedFile: {
         fileName: uploadedFile.fileName,
         originalName: uploadedFile.originalName,
-        fileType: uploadedFile.fileType.toLowerCase(),
-        fileSize: uploadedFile.fileSize,
+        downloadURL: uploadedFile.downloadURL,
         filePath: uploadedFile.filePath,
+        fileSize: uploadedFile.fileSize,
         mimeType: uploadedFile.mimeType,
+        fileType: uploadedFile.fileType,
+        uploadedAt: new Date(),
       },
       createdBy: {
-        userId: req.user.userId,
-        name: req.user.fullName || req.user.username,
-        role: req.user.designation,
+        userId: req.user.userId || req.user._id?.toString(),
+        name: req.user.fullName || req.user.username || req.user.name,
+        role: req.user.designation || req.user.role,
       },
     });
 
+    // Save the measurement book
     const savedMB = await measurementBook.save();
 
     // Populate project details for response
     const populatedMB = await MeasurementBook.findById(savedMB._id).populate(
       "project",
-      "projectName workOrderNumber"
+      "projectName workOrderNumber estimatedCost district"
     );
 
     res.status(201).json({
@@ -142,13 +106,23 @@ const createMeasurementBook = async (req, res) => {
       const field = Object.keys(error.keyValue)[0];
       return res.status(409).json({
         success: false,
-        message: `${field} already exists`,
+        message: `Duplicate ${field} already exists`,
+      });
+    }
+
+    // Handle cast errors (invalid ObjectId)
+    if (error.name === "CastError") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid project ID format",
       });
     }
 
     res.status(500).json({
       success: false,
       message: "Internal server error",
+      details:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };

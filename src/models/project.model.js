@@ -590,6 +590,9 @@ projectSchema.virtual("projectDurationDays").get(function () {
 
 // Virtual for total sub-projects cost
 projectSchema.virtual("totalSubProjectsCost").get(function () {
+  if (!this.subProjects || !Array.isArray(this.subProjects)) {
+    return 0;
+  }
   return this.subProjects.reduce(
     (total, sub) => total + (sub.estimatedAmount || 0),
     0
