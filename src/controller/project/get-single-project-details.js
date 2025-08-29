@@ -1,22 +1,17 @@
-import mongoose from "mongoose";
 import Project from "../../models/project.model.js";
 
 export const getProjectById = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { projectId } = req.params;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+    if (!projectId) {
       return res.status(400).json({
         success: false,
-        message: "Invalid project ID format",
-        details: {
-          providedId: id,
-          expectedFormat: "MongoDB ObjectId (24 character hex string)",
-        },
+        message: "Project id must be provided",
       });
     }
 
-    const project = await Project.findById(id).populate([
+    const project = await Project.findOne({ projectId }).populate([
       {
         path: "subProjects",
         select:
@@ -243,16 +238,9 @@ export const getProjectById = async (req, res) => {
  */
 export const getProjectTimeline = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { projectId } = req.params;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid project ID format",
-      });
-    }
-
-    const project = await Project.findById(id);
+    const project = await Project.findOne({ projectId });
 
     if (!project) {
       return res.status(404).json({

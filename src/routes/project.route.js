@@ -64,7 +64,7 @@ router.post("/", requireJe(), createProject);
 router.get("/dropdown-options", getProjectDropdownOptions);
 
 // Get single project by ID with enhanced details
-router.get("/:id", requireLogin(), getProjectById);
+router.get("/:projectId", requireLogin(), getProjectById);
 
 // Get project timeline/history
 router.get("/:id/timeline", requireLogin(), getProjectTimeline);

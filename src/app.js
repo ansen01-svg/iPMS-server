@@ -18,7 +18,6 @@ import { AppError, errorController } from "./utils/errorHandler.js";
 // Routes
 import archiveProjectRoute from "./routes/archive-project.route.js";
 import authRoute from "./routes/auth.route.js";
-import mbFileRoute from "./routes/mb-file.route.js";
 import mbRoute from "./routes/mb.route.js";
 import projectRoute from "./routes/project.route.js";
 import userRoute from "./routes/user.route.js";
@@ -115,9 +114,7 @@ app.use("/api/auth", authRoute);
 app.use("/api/user", userRoute);
 app.use("/api/project", projectRoute);
 app.use("/api/archive-project", archiveProjectRoute);
-// app.use("/api/files", fileRoutes);
 app.use("/api/mb", mbRoute);
-app.use("/api/mb-files", mbFileRoute);
 
 // ----------------------------------------
 // 6. ERROR HANDLING (APPLICATION LEVEL)

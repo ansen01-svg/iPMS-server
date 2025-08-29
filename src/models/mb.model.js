@@ -2,26 +2,10 @@ import mongoose from "mongoose";
 
 const measurementBookSchema = new mongoose.Schema(
   {
-    // Reference to parent project
-    projectId: {
-      type: String,
-      required: [true, "Project ID is required"],
-      index: true,
-    },
     project: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Project",
       required: [true, "Project reference is required"],
-      index: true,
-    },
-
-    // Required fields (minimum 3 as requested)
-    title: {
-      type: String,
-      required: [true, "MB title is required"],
-      trim: true,
-      minlength: [5, "Title must be at least 5 characters"],
-      maxlength: [200, "Title cannot exceed 200 characters"],
       index: true,
     },
     description: {
@@ -31,72 +15,42 @@ const measurementBookSchema = new mongoose.Schema(
       minlength: [10, "Description must be at least 10 characters"],
       maxlength: [1000, "Description cannot exceed 1000 characters"],
     },
-    mbNumber: {
-      type: String,
-      required: [true, "MB number is required"],
-      trim: true,
-      maxlength: [50, "MB number cannot exceed 50 characters"],
-      index: true,
-    },
-
-    // Additional useful fields
-    measurementDate: {
-      type: Date,
-      required: [true, "Measurement date is required"],
-      index: true,
-    },
-    workOrderNumber: {
-      type: String,
-      trim: true,
-      maxlength: [100, "Work order number cannot exceed 100 characters"],
-    },
-    contractorName: {
-      type: String,
-      trim: true,
-      maxlength: [100, "Contractor name cannot exceed 100 characters"],
-    },
 
     // File upload details
     uploadedFile: {
       fileName: {
         type: String,
-        required: [true, "File name is required"],
-        trim: true,
-        maxlength: [255, "File name cannot exceed 255 characters"],
+        required: true,
       },
       originalName: {
         type: String,
-        required: [true, "Original file name is required"],
-        trim: true,
+        required: true,
       },
-      fileType: {
+      downloadURL: {
         type: String,
-        required: [true, "File type is required"],
-        enum: ["pdf", "jpg", "jpeg", "png"],
-        lowercase: true,
-      },
-      fileSize: {
-        type: Number,
-        required: [true, "File size is required"],
-        min: [1, "File size must be greater than 0"],
-        max: [50 * 1024 * 1024, "File size cannot exceed 50MB"], // 50MB in bytes
+        required: true,
       },
       filePath: {
         type: String,
-        required: [true, "File path is required"],
+        required: true, // Firebase storage path for deletion
+      },
+      fileSize: {
+        type: Number,
+        required: true,
       },
       mimeType: {
         type: String,
-        required: [true, "MIME type is required"],
+        required: true,
       },
-    },
-
-    // Status and approval workflow
-    status: {
-      type: String,
-      enum: ["Draft", "Submitted", "Under Review", "Approved", "Rejected"],
-      default: "Draft",
-      index: true,
+      fileType: {
+        type: String,
+        enum: ["document", "image"],
+        required: true,
+      },
+      uploadedAt: {
+        type: Date,
+        default: Date.now,
+      },
     },
 
     // Creator and modifier info
