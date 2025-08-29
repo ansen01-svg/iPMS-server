@@ -1,13 +1,12 @@
 import mongoose from "mongoose";
-import ArchiveProject from "../../models/archive-project.model.js";
+import Project from "../../models/project.model.js";
 
 /**
- * Update financial progress of an archive project
- * PUT /api/archive-projects/:id/financial-progress
+ * Update financial progress of a project
+ * PUT /api/projects/:id/financial-progress
  */
 export const updateFinancialProgress = async (req, res) => {
   const session = await mongoose.startSession();
-  let uploadedFiles = [];
 
   try {
     await session.startTransaction();
@@ -16,9 +15,8 @@ export const updateFinancialProgress = async (req, res) => {
     const { newBillAmount, remarks, billDetails } = req.body;
     const user = req.user;
 
-    // Get uploaded files from Firebase middleware (already processed and uploaded)
-    uploadedFiles = req.firebaseFiles || req.uploadedFiles || [];
-    console.log(uploadedFiles);
+    // Process uploaded files from Firebase middleware
+    const supportingDocuments = req.firebaseFiles || [];
 
     // Validation
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -40,7 +38,7 @@ export const updateFinancialProgress = async (req, res) => {
     }
 
     // Find the project
-    const project = await ArchiveProject.findById(id).session(session);
+    const project = await Project.findById(id).session(session);
     if (!project) {
       throw new Error("PROJECT_NOT_FOUND");
     }
@@ -52,20 +50,20 @@ export const updateFinancialProgress = async (req, res) => {
 
     // Business logic validations
     const currentBillAmount = project.billSubmittedAmount || 0;
-    const workValue = project.workValue;
+    const estimatedCost = project.estimatedCost;
 
-    // Check if bill amount exceeds work value
-    if (billAmountNum > workValue) {
-      throw new Error("BILL_AMOUNT_EXCEEDS_WORK_VALUE");
+    // Check if bill amount exceeds estimated cost
+    if (billAmountNum > estimatedCost) {
+      throw new Error("BILL_AMOUNT_EXCEEDS_ESTIMATED_COST");
     }
 
     // Prevent backwards financial progress (unless it's a small correction)
     if (billAmountNum < currentBillAmount) {
       const amountDecrease = currentBillAmount - billAmountNum;
-      const workValuePercentage = (amountDecrease / workValue) * 100;
+      const costPercentage = (amountDecrease / estimatedCost) * 100;
 
-      if (workValuePercentage > 5) {
-        // Allow small corrections up to 5% of work value
+      if (costPercentage > 5) {
+        // Allow small corrections up to 5% of estimated cost
         throw new Error("BACKWARD_FINANCIAL_PROGRESS_NOT_ALLOWED");
       }
     }
@@ -73,7 +71,7 @@ export const updateFinancialProgress = async (req, res) => {
     // Check for unrealistic financial progress jumps
     const amountIncrease = billAmountNum - currentBillAmount;
     const increasePercentage =
-      workValue > 0 ? (amountIncrease / workValue) * 100 : 0;
+      estimatedCost > 0 ? (amountIncrease / estimatedCost) * 100 : 0;
 
     if (increasePercentage > 50) {
       // More than 50% increase in one update
@@ -82,10 +80,10 @@ export const updateFinancialProgress = async (req, res) => {
 
     // Calculate new financial progress percentage
     const newFinancialProgress =
-      workValue > 0 ? Math.round((billAmountNum / workValue) * 100) : 0;
+      estimatedCost > 0 ? Math.round((billAmountNum / estimatedCost) * 100) : 0;
 
     // Ensure completion requires supporting documentation
-    if (newFinancialProgress === 100 && uploadedFiles.length === 0) {
+    if (newFinancialProgress === 100 && supportingDocuments.length === 0) {
       throw new Error("FINANCIAL_COMPLETION_REQUIRES_DOCUMENTS");
     }
 
@@ -96,17 +94,19 @@ export const updateFinancialProgress = async (req, res) => {
       }
     }
 
-    const supportingDocuments = uploadedFiles.map((file) => ({
-      fileName: file.fileName,
-      originalName: file.originalName,
-      downloadURL: file.downloadURL,
-      filePath: file.filePath,
-      fileSize: file.fileSize,
-      mimeType: file.mimeType,
-      fileType: file.fileType,
-      uploadedAt: file.uploadedAt,
-      storageRef: file.storageRef,
-    }));
+    // Check for sub-projects if applicable
+    if (project.hasSubProjects && project.subProjects.length > 0) {
+      const totalSubProjectCost = project.subProjects.reduce(
+        (sum, sub) => sum + (sub.estimatedAmount || 0),
+        0
+      );
+
+      if (billAmountNum > totalSubProjectCost && totalSubProjectCost > 0) {
+        console.warn(
+          `Bill amount (₹${billAmountNum}) exceeds total sub-project cost (₹${totalSubProjectCost}) for project ${id}`
+        );
+      }
+    }
 
     // Prepare update data
     const updateData = {
@@ -134,23 +134,21 @@ export const updateFinancialProgress = async (req, res) => {
     await project.addFinancialProgressUpdate(updateData, userInfo);
 
     // Get updated project with populated virtual fields
-    const enrichedProject = await ArchiveProject.findById(id)
-      .session(session)
-      .lean();
+    const enrichedProject = await Project.findById(id).session(session).lean();
 
     // Calculate virtual fields
     const projectData = {
       ...enrichedProject,
-      remainingWorkValue:
-        enrichedProject.workValue - enrichedProject.billSubmittedAmount,
-      progressStatus: getProgressStatus(enrichedProject.progress),
+      remainingBudget:
+        enrichedProject.estimatedCost - enrichedProject.billSubmittedAmount,
+      progressStatus: getProgressStatus(enrichedProject.progressPercentage),
       financialProgressStatus: getProgressStatus(
         enrichedProject.financialProgress
       ),
       progressSummary: {
         physical: {
-          percentage: enrichedProject.progress,
-          status: getProgressStatus(enrichedProject.progress),
+          percentage: enrichedProject.progressPercentage || 0,
+          status: getProgressStatus(enrichedProject.progressPercentage || 0),
           lastUpdate: enrichedProject.lastProgressUpdate,
         },
         financial: {
@@ -159,9 +157,16 @@ export const updateFinancialProgress = async (req, res) => {
           lastUpdate: enrichedProject.lastFinancialProgressUpdate,
           amountSubmitted: enrichedProject.billSubmittedAmount,
           amountRemaining:
-            enrichedProject.workValue - enrichedProject.billSubmittedAmount,
+            enrichedProject.estimatedCost - enrichedProject.billSubmittedAmount,
         },
       },
+      totalSubProjectsCost: enrichedProject.subProjects
+        ? enrichedProject.subProjects.reduce(
+            (sum, sub) => sum + (sub.estimatedAmount || 0),
+            0
+          )
+        : 0,
+      projectDurationDays: calculateProjectDurationDays(enrichedProject),
     };
 
     // Get the latest financial progress update for response
@@ -188,7 +193,7 @@ export const updateFinancialProgress = async (req, res) => {
         financialProgressChange: {
           from: {
             amount: currentBillAmount,
-            percentage: project.financialProgress,
+            percentage: project.financialProgress || 0,
           },
           to: {
             amount: billAmountNum,
@@ -196,7 +201,7 @@ export const updateFinancialProgress = async (req, res) => {
           },
           difference: {
             amount: amountIncrease,
-            percentage: newFinancialProgress - project.financialProgress,
+            percentage: newFinancialProgress - (project.financialProgress || 0),
           },
           changeType:
             amountIncrease > 0
@@ -216,6 +221,18 @@ export const updateFinancialProgress = async (req, res) => {
             return acc;
           }, {}),
         },
+        budgetAnalysis: {
+          utilizationRate: Math.round((billAmountNum / estimatedCost) * 100),
+          remainingBudget: estimatedCost - billAmountNum,
+          isWithinBudget: billAmountNum <= estimatedCost,
+          subProjectsCost: projectData.totalSubProjectsCost,
+          subProjectsUtilization:
+            projectData.totalSubProjectsCost > 0
+              ? Math.round(
+                  (billAmountNum / projectData.totalSubProjectsCost) * 100
+                )
+              : 0,
+        },
       },
       metadata: {
         updatedAt: new Date().toISOString(),
@@ -223,8 +240,21 @@ export const updateFinancialProgress = async (req, res) => {
         totalFinancialProgressUpdates:
           enrichedProject.financialProgressUpdates.length,
         isFullyComplete:
-          enrichedProject.progress === 100 &&
+          enrichedProject.progressPercentage === 100 &&
           enrichedProject.financialProgress === 100,
+        projectType: {
+          hasSubProjects: enrichedProject.hasSubProjects || false,
+          subProjectsCount: enrichedProject.subProjects?.length || 0,
+        },
+        deadlineInfo: {
+          daysUntilDeadline: enrichedProject.projectEndDate
+            ? Math.ceil(
+                (new Date(enrichedProject.projectEndDate) - new Date()) /
+                  (1000 * 60 * 60 * 24)
+              )
+            : null,
+          hasExtension: !!enrichedProject.extensionPeriodForCompletion,
+        },
       },
     });
   } catch (error) {
@@ -281,7 +311,7 @@ export const updateFinancialProgress = async (req, res) => {
       PROJECT_NOT_FOUND: () =>
         res.status(404).json({
           success: false,
-          message: "Archive project not found",
+          message: "Project not found",
           details: { searchedId: req.params.id },
         }),
 
@@ -295,14 +325,14 @@ export const updateFinancialProgress = async (req, res) => {
           },
         }),
 
-      BILL_AMOUNT_EXCEEDS_WORK_VALUE: () =>
+      BILL_AMOUNT_EXCEEDS_ESTIMATED_COST: () =>
         res.status(400).json({
           success: false,
-          message: "Bill amount cannot exceed the total work value",
+          message: "Bill amount cannot exceed the estimated cost",
           details: {
-            workValue: req.project?.workValue,
+            estimatedCost: req.project?.estimatedCost,
             attemptedBillAmount: req.body.newBillAmount,
-            maxAllowed: req.project?.workValue,
+            maxAllowed: req.project?.estimatedCost,
           },
         }),
 
@@ -310,9 +340,9 @@ export const updateFinancialProgress = async (req, res) => {
         res.status(400).json({
           success: false,
           message:
-            "Significant backward financial progress is not allowed. Please contact administrator for corrections greater than 5% of work value",
+            "Significant backward financial progress is not allowed. Please contact administrator for corrections greater than 5% of estimated cost",
           details: {
-            maxAllowedDecrease: "5% of work value",
+            maxAllowedDecrease: "5% of estimated cost",
             currentBillAmount: req.project?.billSubmittedAmount,
             attemptedBillAmount: req.body.newBillAmount,
           },
@@ -322,10 +352,10 @@ export const updateFinancialProgress = async (req, res) => {
         res.status(400).json({
           success: false,
           message:
-            "Financial progress increase exceeds reasonable limits. Maximum 50% of work value per update",
+            "Financial progress increase exceeds reasonable limits. Maximum 50% of estimated cost per update",
           details: {
-            maxAllowedIncrease: "50% of work value",
-            workValue: req.project?.workValue,
+            maxAllowedIncrease: "50% of estimated cost",
+            estimatedCost: req.project?.estimatedCost,
             currentBillAmount: req.project?.billSubmittedAmount,
             attemptedBillAmount: req.body.newBillAmount,
           },
@@ -398,7 +428,7 @@ export const updateFinancialProgress = async (req, res) => {
 
 /**
  * Get financial progress update history for a project
- * GET /api/archive-projects/:id/financial-progress/history
+ * GET /api/projects/:id/financial-progress/history
  */
 export const getFinancialProgressHistory = async (req, res) => {
   try {
@@ -413,11 +443,11 @@ export const getFinancialProgressHistory = async (req, res) => {
       });
     }
 
-    const project = await ArchiveProject.findById(id);
+    const project = await Project.findById(id);
     if (!project) {
       return res.status(404).json({
         success: false,
-        message: "Archive project not found",
+        message: "Project not found",
       });
     }
 
@@ -457,23 +487,77 @@ export const getFinancialProgressHistory = async (req, res) => {
             ) / financialProgressUpdates.length
           : 0,
       lastUpdateDate: project.lastFinancialProgressUpdate,
+      firstUpdateDate:
+        financialProgressUpdates.length > 0
+          ? financialProgressUpdates[0].createdAt
+          : null,
+      largestAmountIncrease: Math.max(
+        ...financialProgressUpdates.map((u) => u.amountDifference),
+        0
+      ),
+      mostActiveUser: getMostActiveFinancialUser(financialProgressUpdates),
+      billsSubmitted: financialProgressUpdates.filter(
+        (u) => u.billDetails?.billNumber
+      ).length,
     };
+
+    // Calculate budget utilization trend
+    const budgetTrend = financialProgressUpdates.map((update, index) => ({
+      updateNumber: index + 1,
+      date: update.createdAt,
+      amount: update.newBillAmount,
+      percentage: update.newFinancialProgress,
+      utilizationRate:
+        project.estimatedCost > 0
+          ? Math.round((update.newBillAmount / project.estimatedCost) * 100)
+          : 0,
+    }));
 
     res.status(200).json({
       success: true,
       message: "Financial progress history retrieved successfully",
       data: {
         projectId: project._id,
-        projectName: project.nameOfWork,
-        workValue: project.workValue,
+        projectName: project.projectName,
+        estimatedCost: project.estimatedCost,
         currentBillAmount: project.billSubmittedAmount,
         currentFinancialProgress: project.financialProgress,
         financialProgressStatus: getProgressStatus(project.financialProgress),
+        remainingBudget: project.estimatedCost - project.billSubmittedAmount,
         history: historyData,
         summary: {
           ...summary,
           avgProgressChange: Math.round(summary.avgProgressChange * 100) / 100,
           avgAmountChange: Math.round(summary.avgAmountChange * 100) / 100,
+        },
+        budgetTrend,
+        projectMetrics: {
+          hasSubProjects: project.hasSubProjects || false,
+          subProjectsCount: project.subProjects?.length || 0,
+          totalSubProjectsCost: project.subProjects
+            ? project.subProjects.reduce(
+                (sum, sub) => sum + (sub.estimatedAmount || 0),
+                0
+              )
+            : 0,
+          daysFromStart: project.projectStartDate
+            ? Math.ceil(
+                (new Date() - new Date(project.projectStartDate)) /
+                  (1000 * 60 * 60 * 24)
+              )
+            : null,
+          daysUntilDeadline: project.projectEndDate
+            ? Math.ceil(
+                (new Date(project.projectEndDate) - new Date()) /
+                  (1000 * 60 * 60 * 24)
+              )
+            : null,
+          budgetUtilizationRate:
+            project.estimatedCost > 0
+              ? Math.round(
+                  (project.billSubmittedAmount / project.estimatedCost) * 100
+                )
+              : 0,
         },
       },
     });
@@ -489,16 +573,29 @@ export const getFinancialProgressHistory = async (req, res) => {
 
 /**
  * Get financial progress statistics across multiple projects
- * GET /api/archive-projects/financial-progress/statistics
+ * GET /api/projects/financial-progress/statistics
  */
 export const getFinancialProgressStatistics = async (req, res) => {
   try {
-    const { financialYear, concernedEngineer, startDate, endDate } = req.query;
+    const {
+      status,
+      district,
+      createdBy,
+      fund,
+      typeOfWork,
+      natureOfWork,
+      startDate,
+      endDate,
+    } = req.query;
 
     // Build filter
     const filter = {};
-    if (financialYear) filter.financialYear = financialYear;
-    if (concernedEngineer) filter.concernedEngineer = concernedEngineer;
+    if (status) filter.status = status;
+    if (district) filter.district = district;
+    if (createdBy) filter["createdBy.userId"] = createdBy;
+    if (fund) filter.fund = fund;
+    if (typeOfWork) filter.typeOfWork = typeOfWork;
+    if (natureOfWork) filter.natureOfWork = natureOfWork;
     if (startDate || endDate) {
       filter.lastFinancialProgressUpdate = {};
       if (startDate)
@@ -507,13 +604,13 @@ export const getFinancialProgressStatistics = async (req, res) => {
     }
 
     // Get basic financial statistics
-    const basicStats = await ArchiveProject.aggregate([
+    const basicStats = await Project.aggregate([
       { $match: filter },
       {
         $group: {
           _id: null,
           totalProjects: { $sum: 1 },
-          totalWorkValue: { $sum: "$workValue" },
+          totalEstimatedCost: { $sum: "$estimatedCost" },
           totalBillSubmitted: { $sum: "$billSubmittedAmount" },
           avgFinancialProgress: { $avg: "$financialProgress" },
           financiallyCompletedProjects: {
@@ -539,24 +636,82 @@ export const getFinancialProgressStatistics = async (req, res) => {
           totalFinancialProgressUpdates: {
             $sum: { $size: "$financialProgressUpdates" },
           },
+          projectsWithSubProjects: {
+            $sum: { $cond: [{ $eq: ["$hasSubProjects", true] }, 1, 0] },
+          },
+          overBudgetProjects: {
+            $sum: {
+              $cond: [
+                { $gt: ["$billSubmittedAmount", "$estimatedCost"] },
+                1,
+                0,
+              ],
+            },
+          },
+          highUtilizationProjects: {
+            $sum: {
+              $cond: [{ $gte: ["$financialProgress", 80] }, 1, 0],
+            },
+          },
         },
       },
     ]);
 
     // Get detailed financial progress update statistics
     const financialProgressUpdateStats =
-      await ArchiveProject.getFinancialProgressUpdateStats(filter);
+      await Project.getFinancialProgressUpdateStats(filter);
+
+    // Get fund-wise financial breakdown
+    const fundFinancialStats = await Project.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: "$fund",
+          projectCount: { $sum: 1 },
+          totalEstimatedCost: { $sum: "$estimatedCost" },
+          totalBillSubmitted: { $sum: "$billSubmittedAmount" },
+          avgFinancialProgress: { $avg: "$financialProgress" },
+          financiallyCompletedProjects: {
+            $sum: { $cond: [{ $eq: ["$financialProgress", 100] }, 1, 0] },
+          },
+        },
+      },
+      { $sort: { totalEstimatedCost: -1 } },
+      { $limit: 10 },
+    ]);
+
+    // Get district-wise financial breakdown
+    const districtFinancialStats = await Project.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: "$district",
+          projectCount: { $sum: 1 },
+          totalEstimatedCost: { $sum: "$estimatedCost" },
+          totalBillSubmitted: { $sum: "$billSubmittedAmount" },
+          avgFinancialProgress: { $avg: "$financialProgress" },
+          financiallyCompletedProjects: {
+            $sum: { $cond: [{ $eq: ["$financialProgress", 100] }, 1, 0] },
+          },
+        },
+      },
+      { $sort: { totalBillSubmitted: -1 } },
+      { $limit: 10 },
+    ]);
 
     const result = {
       projectOverview: basicStats[0] || {
         totalProjects: 0,
-        totalWorkValue: 0,
+        totalEstimatedCost: 0,
         totalBillSubmitted: 0,
         avgFinancialProgress: 0,
         financiallyCompletedProjects: 0,
         financiallyInProgressProjects: 0,
         financiallyNotStartedProjects: 0,
         totalFinancialProgressUpdates: 0,
+        projectsWithSubProjects: 0,
+        overBudgetProjects: 0,
+        highUtilizationProjects: 0,
       },
       financialProgressUpdateStats: financialProgressUpdateStats[0] || {
         totalUpdates: 0,
@@ -580,10 +735,10 @@ export const getFinancialProgressStatistics = async (req, res) => {
             )
           : 0,
       billSubmissionRate:
-        result.projectOverview.totalWorkValue > 0
+        result.projectOverview.totalEstimatedCost > 0
           ? Math.round(
               (result.projectOverview.totalBillSubmitted /
-                result.projectOverview.totalWorkValue) *
+                result.projectOverview.totalEstimatedCost) *
                 100
             )
           : 0,
@@ -595,13 +750,38 @@ export const getFinancialProgressStatistics = async (req, res) => {
                 100
             ) / 100
           : 0,
-      remainingWorkValue:
-        result.projectOverview.totalWorkValue -
+      remainingBudget:
+        result.projectOverview.totalEstimatedCost -
         result.projectOverview.totalBillSubmitted,
+      overBudgetRate:
+        result.projectOverview.totalProjects > 0
+          ? Math.round(
+              (result.projectOverview.overBudgetProjects /
+                result.projectOverview.totalProjects) *
+                100
+            )
+          : 0,
+      highUtilizationRate:
+        result.projectOverview.totalProjects > 0
+          ? Math.round(
+              (result.projectOverview.highUtilizationProjects /
+                result.projectOverview.totalProjects) *
+                100
+            )
+          : 0,
+      avgProjectValue:
+        result.projectOverview.totalProjects > 0
+          ? Math.round(
+              result.projectOverview.totalEstimatedCost /
+                result.projectOverview.totalProjects
+            )
+          : 0,
       projectDistribution: {
         notStarted: result.projectOverview.financiallyNotStartedProjects,
         inProgress: result.projectOverview.financiallyInProgressProjects,
         completed: result.projectOverview.financiallyCompletedProjects,
+        overBudget: result.projectOverview.overBudgetProjects,
+        highUtilization: result.projectOverview.highUtilizationProjects,
       },
     };
 
@@ -611,9 +791,74 @@ export const getFinancialProgressStatistics = async (req, res) => {
       data: {
         ...result,
         additionalMetrics,
+        breakdowns: {
+          byFund: fundFinancialStats.map((f) => ({
+            fund: f._id,
+            projectCount: f.projectCount,
+            totalEstimatedCost: f.totalEstimatedCost,
+            totalBillSubmitted: f.totalBillSubmitted,
+            remainingBudget: f.totalEstimatedCost - f.totalBillSubmitted,
+            avgFinancialProgress:
+              Math.round(f.avgFinancialProgress * 100) / 100,
+            financiallyCompletedProjects: f.financiallyCompletedProjects,
+            financialCompletionRate:
+              f.projectCount > 0
+                ? Math.round(
+                    (f.financiallyCompletedProjects / f.projectCount) * 100
+                  )
+                : 0,
+            billSubmissionRate:
+              f.totalEstimatedCost > 0
+                ? Math.round(
+                    (f.totalBillSubmitted / f.totalEstimatedCost) * 100
+                  )
+                : 0,
+          })),
+          byDistrict: districtFinancialStats.map((d) => ({
+            district: d._id,
+            projectCount: d.projectCount,
+            totalEstimatedCost: d.totalEstimatedCost,
+            totalBillSubmitted: d.totalBillSubmitted,
+            remainingBudget: d.totalEstimatedCost - d.totalBillSubmitted,
+            avgFinancialProgress:
+              Math.round(d.avgFinancialProgress * 100) / 100,
+            financiallyCompletedProjects: d.financiallyCompletedProjects,
+            financialCompletionRate:
+              d.projectCount > 0
+                ? Math.round(
+                    (d.financiallyCompletedProjects / d.projectCount) * 100
+                  )
+                : 0,
+            billSubmissionRate:
+              d.totalEstimatedCost > 0
+                ? Math.round(
+                    (d.totalBillSubmitted / d.totalEstimatedCost) * 100
+                  )
+                : 0,
+          })),
+        },
+        budgetAnalysis: {
+          totalBudget: result.projectOverview.totalEstimatedCost,
+          totalUtilized: result.projectOverview.totalBillSubmitted,
+          totalRemaining: additionalMetrics.remainingBudget,
+          utilizationRate: additionalMetrics.billSubmissionRate,
+          avgProjectBudget: additionalMetrics.avgProjectValue,
+          budgetEfficiency: {
+            onBudgetProjects:
+              result.projectOverview.totalProjects -
+              result.projectOverview.overBudgetProjects,
+            overBudgetProjects: result.projectOverview.overBudgetProjects,
+            highUtilizationProjects:
+              result.projectOverview.highUtilizationProjects,
+          },
+        },
         filters: {
-          financialYear: financialYear || null,
-          concernedEngineer: concernedEngineer || null,
+          status: status || null,
+          district: district || null,
+          createdBy: createdBy || null,
+          fund: fund || null,
+          typeOfWork: typeOfWork || null,
+          natureOfWork: natureOfWork || null,
           startDate: startDate || null,
           endDate: endDate || null,
         },
@@ -632,7 +877,7 @@ export const getFinancialProgressStatistics = async (req, res) => {
 
 /**
  * Update both physical and financial progress together
- * PUT /api/archive-projects/:id/progress/combined
+ * PUT /api/projects/:id/progress/combined
  */
 export const updateCombinedProgress = async (req, res) => {
   const session = await mongoose.startSession();
@@ -663,18 +908,27 @@ export const updateCombinedProgress = async (req, res) => {
     }
 
     // Find the project
-    const project = await ArchiveProject.findById(id).session(session);
+    const project = await Project.findById(id).session(session);
     if (!project) {
       throw new Error("PROJECT_NOT_FOUND");
     }
 
     const updates = [];
+    const previousState = {
+      physicalProgress: project.progressPercentage || 0,
+      financialProgress: project.financialProgress || 0,
+      billAmount: project.billSubmittedAmount || 0,
+    };
 
     // Update physical progress if provided
     if (progress !== undefined) {
       const progressNum = parseFloat(progress);
       if (isNaN(progressNum) || progressNum < 0 || progressNum > 100) {
         throw new Error("INVALID_PROGRESS_VALUE");
+      }
+
+      if (!project.progressUpdatesEnabled) {
+        throw new Error("PROGRESS_UPDATES_DISABLED");
       }
 
       const progressUpdateData = {
@@ -705,8 +959,12 @@ export const updateCombinedProgress = async (req, res) => {
         throw new Error("INVALID_BILL_AMOUNT");
       }
 
-      if (billAmountNum > project.workValue) {
-        throw new Error("BILL_AMOUNT_EXCEEDS_WORK_VALUE");
+      if (billAmountNum > project.estimatedCost) {
+        throw new Error("BILL_AMOUNT_EXCEEDS_ESTIMATED_COST");
+      }
+
+      if (!project.financialProgressUpdatesEnabled) {
+        throw new Error("FINANCIAL_PROGRESS_UPDATES_DISABLED");
       }
 
       const financialUpdateData = {
@@ -732,9 +990,41 @@ export const updateCombinedProgress = async (req, res) => {
     }
 
     // Get updated project
-    const enrichedProject = await ArchiveProject.findById(id)
-      .session(session)
-      .lean();
+    const enrichedProject = await Project.findById(id).session(session).lean();
+
+    // Calculate comprehensive project data
+    const projectData = {
+      ...enrichedProject,
+      remainingBudget:
+        enrichedProject.estimatedCost - enrichedProject.billSubmittedAmount,
+      progressStatus: getProgressStatus(enrichedProject.progressPercentage),
+      financialProgressStatus: getProgressStatus(
+        enrichedProject.financialProgress
+      ),
+      progressSummary: {
+        physical: {
+          percentage: enrichedProject.progressPercentage || 0,
+          status: getProgressStatus(enrichedProject.progressPercentage || 0),
+          lastUpdate: enrichedProject.lastProgressUpdate,
+        },
+        financial: {
+          percentage: enrichedProject.financialProgress || 0,
+          status: getProgressStatus(enrichedProject.financialProgress || 0),
+          lastUpdate: enrichedProject.lastFinancialProgressUpdate,
+          amountSubmitted: enrichedProject.billSubmittedAmount || 0,
+          amountRemaining:
+            enrichedProject.estimatedCost -
+            (enrichedProject.billSubmittedAmount || 0),
+        },
+      },
+      projectDurationDays: calculateProjectDurationDays(enrichedProject),
+      totalSubProjectsCost: enrichedProject.subProjects
+        ? enrichedProject.subProjects.reduce(
+            (sum, sub) => sum + (sub.estimatedAmount || 0),
+            0
+          )
+        : 0,
+    };
 
     // Commit transaction
     await session.commitTransaction();
@@ -753,31 +1043,62 @@ export const updateCombinedProgress = async (req, res) => {
         " and "
       )})`,
       data: {
-        project: {
-          ...enrichedProject,
-          progressSummary: {
-            physical: {
-              percentage: enrichedProject.progress,
-              status: getProgressStatus(enrichedProject.progress),
-              lastUpdate: enrichedProject.lastProgressUpdate,
-            },
-            financial: {
-              percentage: enrichedProject.financialProgress,
-              status: getProgressStatus(enrichedProject.financialProgress),
-              lastUpdate: enrichedProject.lastFinancialProgressUpdate,
-              amountSubmitted: enrichedProject.billSubmittedAmount,
-              amountRemaining:
-                enrichedProject.workValue - enrichedProject.billSubmittedAmount,
-            },
-          },
-        },
+        project: projectData,
         updatesApplied: updates,
+        progressChanges: {
+          physical:
+            progress !== undefined
+              ? {
+                  from: previousState.physicalProgress,
+                  to: enrichedProject.progressPercentage,
+                  difference:
+                    (enrichedProject.progressPercentage || 0) -
+                    previousState.physicalProgress,
+                }
+              : null,
+          financial:
+            newBillAmount !== undefined
+              ? {
+                  from: {
+                    amount: previousState.billAmount,
+                    percentage: previousState.financialProgress,
+                  },
+                  to: {
+                    amount: enrichedProject.billSubmittedAmount,
+                    percentage: enrichedProject.financialProgress,
+                  },
+                  difference: {
+                    amount:
+                      (enrichedProject.billSubmittedAmount || 0) -
+                      previousState.billAmount,
+                    percentage:
+                      (enrichedProject.financialProgress || 0) -
+                      previousState.financialProgress,
+                  },
+                }
+              : null,
+        },
         filesUploaded: {
           count: supportingDocuments.length,
           totalSize: supportingDocuments.reduce(
             (sum, file) => sum + file.fileSize,
             0
           ),
+          byType: supportingDocuments.reduce((acc, file) => {
+            acc[file.fileType] = (acc[file.fileType] || 0) + 1;
+            return acc;
+          }, {}),
+        },
+        progressAlignment: {
+          gap: Math.abs(
+            (enrichedProject.progressPercentage || 0) -
+              (enrichedProject.financialProgress || 0)
+          ),
+          isAligned:
+            Math.abs(
+              (enrichedProject.progressPercentage || 0) -
+                (enrichedProject.financialProgress || 0)
+            ) <= 10, // Within 10% is considered aligned
         },
       },
       metadata: {
@@ -788,8 +1109,27 @@ export const updateCombinedProgress = async (req, res) => {
           userDesignation: user.designation,
         },
         isFullyComplete:
-          enrichedProject.progress === 100 &&
-          enrichedProject.financialProgress === 100,
+          (enrichedProject.progressPercentage || 0) === 100 &&
+          (enrichedProject.financialProgress || 0) === 100,
+        totalUpdates: {
+          physical: enrichedProject.progressUpdates?.length || 0,
+          financial: enrichedProject.financialProgressUpdates?.length || 0,
+          combined:
+            (enrichedProject.progressUpdates?.length || 0) +
+            (enrichedProject.financialProgressUpdates?.length || 0),
+        },
+        projectHealth: {
+          budgetUtilization:
+            enrichedProject.estimatedCost > 0
+              ? Math.round(
+                  ((enrichedProject.billSubmittedAmount || 0) /
+                    enrichedProject.estimatedCost) *
+                    100
+                )
+              : 0,
+          scheduleStatus: getScheduleStatus(enrichedProject),
+          overallScore: calculateProjectScore(enrichedProject),
+        },
       },
     });
   } catch (error) {
@@ -797,6 +1137,37 @@ export const updateCombinedProgress = async (req, res) => {
     console.error("Error updating combined progress:", error);
 
     // Use similar error handling as individual progress updates
+    const errorHandlers = {
+      INVALID_PROJECT_ID: () =>
+        res.status(400).json({
+          success: false,
+          message: "Invalid project ID format",
+        }),
+      NO_PROGRESS_PROVIDED: () =>
+        res.status(400).json({
+          success: false,
+          message:
+            "At least one progress update (progress or newBillAmount) must be provided",
+        }),
+      UNAUTHORIZED_USER: () =>
+        res.status(403).json({
+          success: false,
+          message:
+            "Unauthorized. Only Junior Engineers (JE) can update project progress",
+        }),
+      PROJECT_NOT_FOUND: () =>
+        res.status(404).json({
+          success: false,
+          message: "Project not found",
+        }),
+      // Add other specific error handlers as needed
+    };
+
+    const errorHandler = errorHandlers[error.message];
+    if (errorHandler) {
+      return errorHandler();
+    }
+
     res.status(500).json({
       success: false,
       message:
@@ -816,6 +1187,72 @@ function getProgressStatus(progress) {
   if (progress < 75) return "Halfway Complete";
   if (progress < 100) return "Near Completion";
   return "Completed";
+}
+
+// Helper function to calculate project duration in days
+function calculateProjectDurationDays(project) {
+  if (project.projectStartDate && project.projectEndDate) {
+    const diffTime = Math.abs(
+      new Date(project.projectEndDate) - new Date(project.projectStartDate)
+    );
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  }
+  return 0;
+}
+
+// Helper function to find most active user in financial updates
+function getMostActiveFinancialUser(financialProgressUpdates) {
+  if (financialProgressUpdates.length === 0) return null;
+
+  const userCounts = {};
+  financialProgressUpdates.forEach((update) => {
+    const userId = update.updatedBy.userId;
+    const userName = update.updatedBy.userName;
+    userCounts[userId] = userCounts[userId] || { name: userName, count: 0 };
+    userCounts[userId].count++;
+  });
+
+  const mostActive = Object.entries(userCounts).reduce(
+    (max, [userId, data]) =>
+      data.count > max.count ? { userId, ...data } : max,
+    { count: 0 }
+  );
+
+  return mostActive.count > 0 ? mostActive : null;
+}
+
+// Helper function to determine schedule status
+function getScheduleStatus(project) {
+  if (!project.projectEndDate) return "No deadline set";
+
+  const currentDate = new Date();
+  const deadlineDate = new Date(
+    project.extensionPeriodForCompletion || project.projectEndDate
+  );
+  const daysUntilDeadline = Math.ceil(
+    (deadlineDate - currentDate) / (1000 * 60 * 60 * 24)
+  );
+
+  if ((project.progressPercentage || 0) === 100) return "Completed";
+  if (daysUntilDeadline < 0) return "Overdue";
+  if (daysUntilDeadline <= 7) return "Critical";
+  if (daysUntilDeadline <= 30) return "At Risk";
+  return "On Track";
+}
+
+// Helper function to calculate overall project score
+function calculateProjectScore(project) {
+  const physicalProgress = project.progressPercentage || 0;
+  const financialProgress = project.financialProgress || 0;
+  const progressAlignment =
+    100 - Math.abs(physicalProgress - financialProgress);
+
+  // Weighted score: 40% physical, 40% financial, 20% alignment
+  const score = Math.round(
+    physicalProgress * 0.4 + financialProgress * 0.4 + progressAlignment * 0.2
+  );
+
+  return Math.max(0, Math.min(100, score));
 }
 
 export default {

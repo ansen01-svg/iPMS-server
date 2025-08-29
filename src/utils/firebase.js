@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import * as dotenv from "dotenv";
 import { initializeApp } from "firebase/app";
 import {
   deleteObject,
@@ -8,6 +9,8 @@ import {
   uploadBytes,
 } from "firebase/storage";
 import path from "path";
+
+dotenv.config();
 
 // Firebase configuration
 const firebaseConfig = {
