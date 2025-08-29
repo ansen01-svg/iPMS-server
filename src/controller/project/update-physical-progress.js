@@ -1,16 +1,13 @@
 import mongoose from "mongoose";
-import ArchiveProject from "../../models/archive-project.model.js";
-import { deleteMultipleFilesFromFirebase } from "../../utils/firebase.js";
+import Project from "../../models/project.model.js";
 
 /**
- * Update progress of an archive project
- * PUT /api/archive-projects/:id/progress
+ * Update physical progress of a project
+ * PUT /api/projects/:id/progress
  */
 export const updateProjectProgress = async (req, res) => {
   // Use a session for transaction to ensure data consistency
   const session = await mongoose.startSession();
-  let uploadedFiles = [];
-  let validUploadedFiles = [];
 
   try {
     await session.startTransaction();
@@ -19,11 +16,8 @@ export const updateProjectProgress = async (req, res) => {
     const { progress, remarks } = req.body;
     const user = req.user;
 
-    // Get uploaded files from Firebase middleware (already processed and uploaded)
-    uploadedFiles = req.firebaseFiles || req.uploadedFiles || [];
-
-    console.log(`Processing progress update for project ${id}`);
-    console.log(`Files uploaded to Firebase: ${uploadedFiles.length}`);
+    // Process uploaded files from Firebase middleware
+    const supportingDocuments = req.firebaseFiles || [];
 
     // Validation
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -45,7 +39,7 @@ export const updateProjectProgress = async (req, res) => {
     }
 
     // Find the project
-    const project = await ArchiveProject.findById(id).session(session);
+    const project = await Project.findById(id).session(session);
     if (!project) {
       throw new Error("PROJECT_NOT_FOUND");
     }
@@ -56,7 +50,7 @@ export const updateProjectProgress = async (req, res) => {
     }
 
     // Business logic validations
-    const currentProgress = project.progress || 0;
+    const currentProgress = project.progressPercentage || 0;
 
     // Prevent backwards progress (unless it's a correction)
     if (progressNum < currentProgress) {
@@ -74,60 +68,35 @@ export const updateProjectProgress = async (req, res) => {
       throw new Error("UNREALISTIC_PROGRESS_JUMP");
     }
 
-    // Filter out files that don't have required fields
-    validUploadedFiles = uploadedFiles.filter((file) => {
-      const hasRequiredFields =
-        file.downloadURL &&
-        file.fileName &&
-        file.originalName &&
-        file.filePath &&
-        file.fileSize !== undefined &&
-        file.mimeType &&
-        file.fileType;
-
-      if (!hasRequiredFields) {
-        console.warn(
-          `Warning: Filtering out invalid file: ${
-            file.originalName || "Unknown"
-          } - Missing required fields`
-        );
-        console.warn(`Missing fields:`, {
-          downloadURL: !file.downloadURL,
-          fileName: !file.fileName,
-          originalName: !file.originalName,
-          filePath: !file.filePath,
-          fileSize: file.fileSize === undefined,
-          mimeType: !file.mimeType,
-          fileType: !file.fileType,
-        });
-      }
-
-      return hasRequiredFields;
-    });
-
-    console.log(
-      `Valid files after filtering: ${validUploadedFiles.length}/${uploadedFiles.length}`
-    );
-
     // Ensure completion requires supporting documentation
-    if (progressNum === 100 && validUploadedFiles.length === 0) {
+    if (progressNum === 100 && supportingDocuments.length === 0) {
       throw new Error("COMPLETION_REQUIRES_DOCUMENTS");
     }
 
-    // Prepare update data with filtered Firebase file information
+    // Check project deadline if completing
+    if (
+      progressNum === 100 &&
+      (project.projectEndDate || project.extensionPeriodForCompletion)
+    ) {
+      const currentDate = new Date();
+      const effectiveDeadline =
+        project.extensionPeriodForCompletion || project.projectEndDate;
+
+      if (currentDate > effectiveDeadline) {
+        const daysOverdue = Math.ceil(
+          (currentDate - effectiveDeadline) / (1000 * 60 * 60 * 24)
+        );
+        console.warn(
+          `Project ${id} completed ${daysOverdue} days after deadline`
+        );
+      }
+    }
+
+    // Prepare update data
     const updateData = {
       newProgress: progressNum,
       remarks: remarks || "",
-      supportingDocuments: validUploadedFiles.map((file) => ({
-        fileName: file.fileName,
-        originalName: file.originalName,
-        downloadURL: file.downloadURL,
-        filePath: file.filePath,
-        fileSize: file.fileSize,
-        mimeType: file.mimeType,
-        fileType: file.fileType,
-        uploadedAt: file.uploadedAt || new Date(),
-      })),
+      supportingDocuments,
       ipAddress: req.ip || req.connection.remoteAddress,
       userAgent: req.get("User-Agent") || "",
     };
@@ -138,42 +107,38 @@ export const updateProjectProgress = async (req, res) => {
       userDesignation: user.designation,
     };
 
-    console.log(
-      `Adding progress update: ${currentProgress}% -> ${progressNum}%`
-    );
-    console.log(
-      `Supporting documents: ${validUploadedFiles.length} valid files (${
-        uploadedFiles.length - validUploadedFiles.length
-      } filtered out)`
-    );
-
     // Add progress update using the model method
-    const updatedProject = await project.addProgressUpdate(
-      updateData,
-      userInfo
-    );
-
-    console.log(`Project progress updated in database.`, updatedProject);
+    await project.addProgressUpdate(updateData, userInfo);
 
     // Get updated project with populated virtual fields
-    const enrichedProject = await ArchiveProject.findById(id)
-      .session(session)
-      .lean();
+    const enrichedProject = await Project.findById(id).session(session).lean();
 
     // Calculate virtual fields
     const projectData = {
       ...enrichedProject,
-      remainingWorkValue:
-        enrichedProject.workValue - (enrichedProject.billSubmittedAmount || 0),
-      progressStatus: getProgressStatus(enrichedProject.progress),
-      financialProgress:
-        enrichedProject.billSubmittedAmount && enrichedProject.workValue
-          ? Math.round(
-              (enrichedProject.billSubmittedAmount /
-                enrichedProject.workValue) *
-                100
-            )
-          : 0,
+      remainingBudget:
+        enrichedProject.estimatedCost -
+        (enrichedProject.billSubmittedAmount || 0),
+      progressStatus: getProgressStatus(enrichedProject.progressPercentage),
+      financialProgressStatus: getProgressStatus(
+        enrichedProject.financialProgress
+      ),
+      progressSummary: {
+        physical: {
+          percentage: enrichedProject.progressPercentage,
+          status: getProgressStatus(enrichedProject.progressPercentage),
+          lastUpdate: enrichedProject.lastProgressUpdate,
+        },
+        financial: {
+          percentage: enrichedProject.financialProgress || 0,
+          status: getProgressStatus(enrichedProject.financialProgress || 0),
+          lastUpdate: enrichedProject.lastFinancialProgressUpdate,
+          amountSubmitted: enrichedProject.billSubmittedAmount || 0,
+          amountRemaining:
+            enrichedProject.estimatedCost -
+            (enrichedProject.billSubmittedAmount || 0),
+        },
+      },
     };
 
     // Get the latest progress update for response
@@ -187,19 +152,8 @@ export const updateProjectProgress = async (req, res) => {
 
     // Log successful update
     console.log(
-      `Progress updated successfully for project ${id}: ${currentProgress}% -> ${progressNum}% by user: ${user.id}`
+      `Project progress updated successfully for project ${id}: ${currentProgress}% -> ${progressNum}% by user: ${user.id}`
     );
-
-    if (validUploadedFiles.length > 0) {
-      console.log(`Files uploaded to Firebase:`);
-      validUploadedFiles.forEach((file, index) => {
-        console.log(
-          `   ${index + 1}. ${file.originalName} (${(
-            file.fileSize / 1024
-          ).toFixed(2)}KB) - ${file.fileType}`
-        );
-      });
-    }
 
     // Success response
     res.status(200).json({
@@ -220,56 +174,33 @@ export const updateProjectProgress = async (req, res) => {
               : "no change",
         },
         filesUploaded: {
-          count: validUploadedFiles.length,
-          filteredCount: uploadedFiles.length - validUploadedFiles.length,
-          totalSize: validUploadedFiles.reduce(
+          count: supportingDocuments.length,
+          totalSize: supportingDocuments.reduce(
             (sum, file) => sum + file.fileSize,
             0
           ),
-          types: validUploadedFiles.reduce((acc, file) => {
+          types: supportingDocuments.reduce((acc, file) => {
             acc[file.fileType] = (acc[file.fileType] || 0) + 1;
             return acc;
           }, {}),
-          files: validUploadedFiles.map((file) => ({
-            originalName: file.originalName,
-            fileName: file.fileName,
-            downloadURL: file.downloadURL,
-            fileSize: file.fileSize,
-            fileType: file.fileType,
-          })),
         },
       },
       metadata: {
         updatedAt: new Date().toISOString(),
         updatedBy: userInfo,
         totalProgressUpdates: enrichedProject.progressUpdates.length,
-        firebaseStorage: {
-          bucket: process.env.FIREBASE_STORAGE_BUCKET,
-          folder: "progress-updates",
-        },
+        projectDurationDays: calculateProjectDurationDays(enrichedProject),
+        daysUntilDeadline: enrichedProject.projectEndDate
+          ? Math.ceil(
+              (new Date(enrichedProject.projectEndDate) - new Date()) /
+                (1000 * 60 * 60 * 24)
+            )
+          : null,
       },
     });
   } catch (error) {
     // Rollback transaction
     await session.abortTransaction();
-
-    // Delete uploaded files from Firebase in case of error
-    if (validUploadedFiles.length > 0) {
-      console.log(
-        `Cleaning up ${validUploadedFiles.length} uploaded files due to error...`
-      );
-      try {
-        const filePaths = validUploadedFiles.map(
-          (file) => file.filePath || file.storageRef
-        );
-        const deleteResult = await deleteMultipleFilesFromFirebase(filePaths);
-        console.log(
-          `Cleanup result: ${deleteResult.success.length} deleted, ${deleteResult.failed.length} failed`
-        );
-      } catch (cleanupError) {
-        console.error("Error cleaning up uploaded files:", cleanupError);
-      }
-    }
 
     console.error("Error updating project progress:", error);
 
@@ -321,7 +252,7 @@ export const updateProjectProgress = async (req, res) => {
       PROJECT_NOT_FOUND: () =>
         res.status(404).json({
           success: false,
-          message: "Archive project not found",
+          message: "Project not found",
           details: { searchedId: req.params.id },
         }),
 
@@ -342,7 +273,7 @@ export const updateProjectProgress = async (req, res) => {
             "Significant backward progress is not allowed. Please contact administrator for corrections greater than 5%",
           details: {
             maxAllowedDecrease: "5%",
-            currentProgress: req.project?.progress,
+            currentProgress: req.project?.progressPercentage,
             attemptedProgress: req.body.progress,
           },
         }),
@@ -354,7 +285,7 @@ export const updateProjectProgress = async (req, res) => {
             "Progress increase exceeds reasonable limits. Maximum 50% increase per update",
           details: {
             maxAllowedIncrease: "50%",
-            currentProgress: req.project?.progress,
+            currentProgress: req.project?.progressPercentage,
             attemptedProgress: req.body.progress,
           },
         }),
@@ -366,9 +297,8 @@ export const updateProjectProgress = async (req, res) => {
             "Project completion (100% progress) requires at least one supporting document",
           details: {
             progress: 100,
-            filesUploaded: validUploadedFiles.length,
+            filesUploaded: 0,
             requirement: "Minimum 1 supporting file",
-            note: "Files must be uploaded through the supportingFiles field",
           },
         }),
     };
@@ -393,28 +323,10 @@ export const updateProjectProgress = async (req, res) => {
       });
     }
 
-    // Handle Firebase storage errors
-    if (error.message && error.message.includes("Firebase")) {
-      return res.status(500).json({
-        success: false,
-        message: "Cloud storage error occurred during file processing",
-        details: {
-          error: error.message,
-          filesAffected: validUploadedFiles.length,
-          suggestion:
-            "Please try again or contact administrator if the problem persists",
-        },
-      });
-    }
-
     // Generic server error
     res.status(500).json({
       success: false,
       message: "Internal server error occurred while updating project progress",
-      details: {
-        filesUploaded: validUploadedFiles.length,
-        timestamp: new Date().toISOString(),
-      },
       error:
         process.env.NODE_ENV === "development"
           ? {
@@ -432,7 +344,7 @@ export const updateProjectProgress = async (req, res) => {
 
 /**
  * Get progress update history for a project
- * GET /api/archive-projects/:id/progress/history
+ * GET /api/projects/:id/progress/history
  */
 export const getProgressHistory = async (req, res) => {
   try {
@@ -447,11 +359,11 @@ export const getProgressHistory = async (req, res) => {
       });
     }
 
-    const project = await ArchiveProject.findById(id);
+    const project = await Project.findById(id);
     if (!project) {
       return res.status(404).json({
         success: false,
-        message: "Archive project not found",
+        message: "Project not found",
       });
     }
 
@@ -484,13 +396,13 @@ export const getProgressHistory = async (req, res) => {
             ) / progressUpdates.length
           : 0,
       lastUpdateDate: project.lastProgressUpdate,
-      firebaseFilesCount: progressUpdates.reduce((sum, update) => {
-        return (
-          sum +
-          (update.supportingDocuments?.filter((doc) => doc.downloadURL)
-            ?.length || 0)
-        );
-      }, 0),
+      firstUpdateDate:
+        progressUpdates.length > 0 ? progressUpdates[0].createdAt : null,
+      mostActiveUser: getMostActiveUser(progressUpdates),
+      largestProgressJump: Math.max(
+        ...progressUpdates.map((u) => u.progressDifference),
+        0
+      ),
     };
 
     res.status(200).json({
@@ -498,17 +410,33 @@ export const getProgressHistory = async (req, res) => {
       message: "Progress history retrieved successfully",
       data: {
         projectId: project._id,
-        projectName: project.nameOfWork,
-        currentProgress: project.progress,
+        projectName: project.projectName,
+        currentProgress: project.progressPercentage,
         progressStatus: project.progressStatus,
+        estimatedCost: project.estimatedCost,
+        projectDuration: project.projectDurationDays,
         history: historyData,
         summary: {
           ...summary,
           avgProgressChange: Math.round(summary.avgProgressChange * 100) / 100,
         },
-        storage: {
-          platform: "Firebase Storage",
-          bucket: process.env.FIREBASE_STORAGE_BUCKET,
+        projectMetrics: {
+          daysFromStart: project.projectStartDate
+            ? Math.ceil(
+                (new Date() - new Date(project.projectStartDate)) /
+                  (1000 * 60 * 60 * 24)
+              )
+            : null,
+          daysUntilDeadline: project.projectEndDate
+            ? Math.ceil(
+                (new Date(project.projectEndDate) - new Date()) /
+                  (1000 * 60 * 60 * 24)
+              )
+            : null,
+          hasExtension: !!project.extensionPeriodForCompletion,
+          isOverdue:
+            project.projectEndDate &&
+            new Date() > new Date(project.projectEndDate),
         },
       },
     });
@@ -524,16 +452,29 @@ export const getProgressHistory = async (req, res) => {
 
 /**
  * Get progress statistics across multiple projects
- * GET /api/archive-projects/progress/statistics
+ * GET /api/projects/progress/statistics
  */
 export const getProgressStatistics = async (req, res) => {
   try {
-    const { financialYear, concernedEngineer, startDate, endDate } = req.query;
+    const {
+      status,
+      district,
+      createdBy,
+      fund,
+      typeOfWork,
+      natureOfWork,
+      startDate,
+      endDate,
+    } = req.query;
 
     // Build filter
     const filter = {};
-    if (financialYear) filter.financialYear = financialYear;
-    if (concernedEngineer) filter.concernedEngineer = concernedEngineer;
+    if (status) filter.status = status;
+    if (district) filter.district = district;
+    if (createdBy) filter["createdBy.userId"] = createdBy;
+    if (fund) filter.fund = fund;
+    if (typeOfWork) filter.typeOfWork = typeOfWork;
+    if (natureOfWork) filter.natureOfWork = natureOfWork;
     if (startDate || endDate) {
       filter.lastProgressUpdate = {};
       if (startDate) filter.lastProgressUpdate.$gte = new Date(startDate);
@@ -541,23 +482,24 @@ export const getProgressStatistics = async (req, res) => {
     }
 
     // Get basic project statistics
-    const basicStats = await ArchiveProject.aggregate([
+    const basicStats = await Project.aggregate([
       { $match: filter },
       {
         $group: {
           _id: null,
           totalProjects: { $sum: 1 },
-          avgProgress: { $avg: "$progress" },
+          totalEstimatedCost: { $sum: "$estimatedCost" },
+          avgProgress: { $avg: "$progressPercentage" },
           completedProjects: {
-            $sum: { $cond: [{ $eq: ["$progress", 100] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ["$progressPercentage", 100] }, 1, 0] },
           },
           inProgressProjects: {
             $sum: {
               $cond: [
                 {
                   $and: [
-                    { $gt: ["$progress", 0] },
-                    { $lt: ["$progress", 100] },
+                    { $gt: ["$progressPercentage", 0] },
+                    { $lt: ["$progressPercentage", 100] },
                   ],
                 },
                 1,
@@ -566,28 +508,82 @@ export const getProgressStatistics = async (req, res) => {
             },
           },
           notStartedProjects: {
-            $sum: { $cond: [{ $eq: ["$progress", 0] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ["$progressPercentage", 0] }, 1, 0] },
           },
           totalProgressUpdates: { $sum: { $size: "$progressUpdates" } },
-          totalWorkValue: { $sum: "$workValue" },
+          projectsWithSubProjects: {
+            $sum: { $cond: [{ $eq: ["$hasSubProjects", true] }, 1, 0] },
+          },
+          totalSubProjects: { $sum: { $size: "$subProjects" } },
+          overdueProjects: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $lt: ["$progressPercentage", 100] },
+                    { $lt: ["$projectEndDate", new Date()] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
         },
       },
     ]);
 
     // Get detailed progress update statistics
-    const progressUpdateStats = await ArchiveProject.getProgressUpdateStats(
-      filter
-    );
+    const progressUpdateStats = await Project.getProgressUpdateStats(filter);
+
+    // Get district-wise breakdown
+    const districtStats = await Project.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: "$district",
+          projectCount: { $sum: 1 },
+          avgProgress: { $avg: "$progressPercentage" },
+          completedProjects: {
+            $sum: { $cond: [{ $eq: ["$progressPercentage", 100] }, 1, 0] },
+          },
+          totalEstimatedCost: { $sum: "$estimatedCost" },
+        },
+      },
+      { $sort: { projectCount: -1 } },
+      { $limit: 10 },
+    ]);
+
+    // Get fund-wise breakdown
+    const fundStats = await Project.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: "$fund",
+          projectCount: { $sum: 1 },
+          avgProgress: { $avg: "$progressPercentage" },
+          completedProjects: {
+            $sum: { $cond: [{ $eq: ["$progressPercentage", 100] }, 1, 0] },
+          },
+          totalEstimatedCost: { $sum: "$estimatedCost" },
+        },
+      },
+      { $sort: { totalEstimatedCost: -1 } },
+      { $limit: 10 },
+    ]);
 
     const result = {
       projectOverview: basicStats[0] || {
         totalProjects: 0,
+        totalEstimatedCost: 0,
         avgProgress: 0,
         completedProjects: 0,
         inProgressProjects: 0,
         notStartedProjects: 0,
         totalProgressUpdates: 0,
-        totalWorkValue: 0,
+        projectsWithSubProjects: 0,
+        totalSubProjects: 0,
+        overdueProjects: 0,
       },
       progressUpdateStats: progressUpdateStats[0] || {
         totalUpdates: 0,
@@ -616,19 +612,36 @@ export const getProgressStatistics = async (req, res) => {
                 100
             ) / 100
           : 0,
+      overdueRate:
+        result.projectOverview.totalProjects > 0
+          ? Math.round(
+              (result.projectOverview.overdueProjects /
+                result.projectOverview.totalProjects) *
+                100
+            )
+          : 0,
+      subProjectUtilizationRate:
+        result.projectOverview.totalProjects > 0
+          ? Math.round(
+              (result.projectOverview.projectsWithSubProjects /
+                result.projectOverview.totalProjects) *
+                100
+            )
+          : 0,
+      avgSubProjectsPerProject:
+        result.projectOverview.projectsWithSubProjects > 0
+          ? Math.round(
+              (result.projectOverview.totalSubProjects /
+                result.projectOverview.projectsWithSubProjects) *
+                100
+            ) / 100
+          : 0,
       projectDistribution: {
         notStarted: result.projectOverview.notStartedProjects,
         inProgress: result.projectOverview.inProgressProjects,
         completed: result.projectOverview.completedProjects,
+        overdue: result.projectOverview.overdueProjects,
       },
-      filesPerUpdate:
-        result.progressUpdateStats.totalUpdates > 0
-          ? Math.round(
-              (result.progressUpdateStats.totalFilesUploaded /
-                result.progressUpdateStats.totalUpdates) *
-                100
-            ) / 100
-          : 0,
     };
 
     res.status(200).json({
@@ -637,14 +650,37 @@ export const getProgressStatistics = async (req, res) => {
       data: {
         ...result,
         additionalMetrics,
-        storage: {
-          platform: "Firebase Storage",
-          bucket: process.env.FIREBASE_STORAGE_BUCKET,
-          totalFilesUploaded: result.progressUpdateStats.totalFilesUploaded,
+        breakdowns: {
+          byDistrict: districtStats.map((d) => ({
+            district: d._id,
+            projectCount: d.projectCount,
+            avgProgress: Math.round(d.avgProgress * 100) / 100,
+            completedProjects: d.completedProjects,
+            completionRate:
+              d.projectCount > 0
+                ? Math.round((d.completedProjects / d.projectCount) * 100)
+                : 0,
+            totalEstimatedCost: d.totalEstimatedCost,
+          })),
+          byFund: fundStats.map((f) => ({
+            fund: f._id,
+            projectCount: f.projectCount,
+            avgProgress: Math.round(f.avgProgress * 100) / 100,
+            completedProjects: f.completedProjects,
+            completionRate:
+              f.projectCount > 0
+                ? Math.round((f.completedProjects / f.projectCount) * 100)
+                : 0,
+            totalEstimatedCost: f.totalEstimatedCost,
+          })),
         },
         filters: {
-          financialYear: financialYear || null,
-          concernedEngineer: concernedEngineer || null,
+          status: status || null,
+          district: district || null,
+          createdBy: createdBy || null,
+          fund: fund || null,
+          typeOfWork: typeOfWork || null,
+          natureOfWork: natureOfWork || null,
           startDate: startDate || null,
           endDate: endDate || null,
         },
@@ -671,4 +707,40 @@ function getProgressStatus(progress) {
   return "Completed";
 }
 
-export default updateProjectProgress;
+// Helper function to calculate project duration in days
+function calculateProjectDurationDays(project) {
+  if (project.projectStartDate && project.projectEndDate) {
+    const diffTime = Math.abs(
+      new Date(project.projectEndDate) - new Date(project.projectStartDate)
+    );
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  }
+  return 0;
+}
+
+// Helper function to find most active user in progress updates
+function getMostActiveUser(progressUpdates) {
+  if (progressUpdates.length === 0) return null;
+
+  const userCounts = {};
+  progressUpdates.forEach((update) => {
+    const userId = update.updatedBy.userId;
+    const userName = update.updatedBy.userName;
+    userCounts[userId] = userCounts[userId] || { name: userName, count: 0 };
+    userCounts[userId].count++;
+  });
+
+  const mostActive = Object.entries(userCounts).reduce(
+    (max, [userId, data]) =>
+      data.count > max.count ? { userId, ...data } : max,
+    { count: 0 }
+  );
+
+  return mostActive.count > 0 ? mostActive : null;
+}
+
+export default {
+  updateProjectProgress,
+  getProgressHistory,
+  getProgressStatistics,
+};

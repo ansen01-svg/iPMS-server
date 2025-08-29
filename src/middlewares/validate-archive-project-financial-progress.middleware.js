@@ -1,4 +1,3 @@
-// src/middlewares/validate-financial-progress.middleware.js
 import { body, param, query, validationResult } from "express-validator";
 
 // Validation rules for updating financial progress

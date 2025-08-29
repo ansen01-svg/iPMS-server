@@ -39,7 +39,6 @@ import {
   financialProgressUpdateRateLimit,
   handleFinancialValidationErrors,
   validateCompleteCombinedProgressUpdate,
-  validateCompleteFinancialProgressUpdate,
   validateFinancialProgressHistoryQuery,
   validateFinancialProgressStatisticsQuery,
 } from "../middlewares/validate-archive-project-financial-progress.middleware.js";
@@ -134,7 +133,7 @@ router.put(
     folder: "financial-updates",
     requireFiles: false,
   }),
-  ...validateCompleteFinancialProgressUpdate,
+  // ...validateCompleteFinancialProgressUpdate,
   updateFinancialProgress
 );
 
