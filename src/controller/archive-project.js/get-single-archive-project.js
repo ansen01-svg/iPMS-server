@@ -5,7 +5,6 @@ export const getArchiveProjectById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Check if ID is a valid MongoDB ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
@@ -17,7 +16,6 @@ export const getArchiveProjectById = async (req, res) => {
       });
     }
 
-    // Find the project by ID
     const project = await ArchiveProject.findById(id);
 
     if (!project) {
@@ -37,21 +35,41 @@ export const getArchiveProjectById = async (req, res) => {
     // Calculate remaining work value
     const remainingWorkValue = project.remainingWorkValue;
 
-    // Get progress status
+    // Get progress statuses
     const progressStatus = project.progressStatus;
+    const financialProgressStatus = project.financialProgressStatus; // NEW
 
     // Calculate financial progress
-    const financialProgress = project.calculateFinancialProgress();
+    const calculatedFinancialProgress = project.calculateFinancialProgress();
 
-    // Add calculated fields to response
+    // UPDATED: Add calculated fields to response including financial progress
     const enrichedProject = {
       ...projectData,
       remainingWorkValue,
       progressStatus,
-      financialProgress,
+      financialProgressStatus, // NEW
+      financialProgress:
+        project.financialProgress || calculatedFinancialProgress,
+      progressSummary: {
+        // NEW: Combined progress summary
+        physical: {
+          percentage: project.progress || 0,
+          status: progressStatus,
+          lastUpdate: project.lastProgressUpdate,
+          totalUpdates: project.totalProgressUpdates,
+        },
+        financial: {
+          percentage: project.financialProgress || calculatedFinancialProgress,
+          status: financialProgressStatus,
+          lastUpdate: project.lastFinancialProgressUpdate,
+          totalUpdates: project.totalFinancialProgressUpdates,
+          amountSubmitted: project.billSubmittedAmount,
+          amountRemaining: remainingWorkValue,
+        },
+      },
     };
 
-    // Calculate additional project metrics
+    // UPDATED: Calculate additional project metrics including financial metrics
     const projectMetrics = {
       daysFromAAToFWO:
         project.AADated && project.FWODate
@@ -71,49 +89,82 @@ export const getArchiveProjectById = async (req, res) => {
               (project.billSubmittedAmount / project.workValue) * 100 * 100
             ) / 100
           : 0,
-      isOverdue:
+      isPhysicallyOverdue:
         project.progress < 100 && project.FWODate
-          ? new Date() - new Date(project.FWODate) > 365 * 24 * 60 * 60 * 1000 // More than 1 year
+          ? new Date() - new Date(project.FWODate) > 365 * 24 * 60 * 60 * 1000
+          : false,
+      isFinanciallyOverdue:
+        project.financialProgress < 100 && project.FWODate // NEW
+          ? new Date() - new Date(project.FWODate) > 365 * 24 * 60 * 60 * 1000
           : false,
       projectAge: project.createdAt
         ? Math.ceil(
             (new Date() - new Date(project.createdAt)) / (1000 * 60 * 60 * 24)
           )
         : 0,
+      progressGap: Math.abs(
+        (project.progress || 0) - (project.financialProgress || 0)
+      ), // NEW: Gap between physical and financial progress
+      isFullyComplete:
+        (project.progress || 0) === 100 &&
+        (project.financialProgress || 0) === 100, // NEW
     };
 
-    // Find related projects (same contractor, same engineer, same location)
+    // Find related projects (same logic as before)
     const relatedProjectsPromises = [
-      // Projects by same contractor
       ArchiveProject.find({
         nameOfContractor: project.nameOfContractor,
         _id: { $ne: project._id },
       })
-        .select("_id nameOfWork progress workValue financialYear")
+        .select(
+          "_id nameOfWork progress financialProgress workValue financialYear billSubmittedAmount"
+        ) // UPDATED: Include financial fields
         .limit(5)
         .sort({ createdAt: -1 }),
 
-      // Projects by same engineer
       ArchiveProject.find({
         concernedEngineer: project.concernedEngineer,
         _id: { $ne: project._id },
       })
-        .select("_id nameOfWork progress workValue financialYear")
+        .select(
+          "_id nameOfWork progress financialProgress workValue financialYear billSubmittedAmount"
+        ) // UPDATED
         .limit(5)
         .sort({ createdAt: -1 }),
 
-      // Projects in same location
       ArchiveProject.find({
         location: project.location,
         _id: { $ne: project._id },
       })
-        .select("_id nameOfWork progress workValue financialYear")
+        .select(
+          "_id nameOfWork progress financialProgress workValue financialYear billSubmittedAmount"
+        ) // UPDATED
         .limit(5)
         .sort({ createdAt: -1 }),
     ];
 
     const [projectsByContractor, projectsByEngineer, projectsByLocation] =
       await Promise.all(relatedProjectsPromises);
+
+    // UPDATED: Enhance related projects with progress summaries
+    const enhanceRelatedProjects = (projects) =>
+      projects.map((p) => ({
+        ...p.toObject(),
+        progressSummary: {
+          physical: {
+            percentage: p.progress || 0,
+            status: getProgressStatus(p.progress || 0),
+          },
+          financial: {
+            percentage:
+              p.financialProgress ||
+              (p.workValue > 0
+                ? Math.round((p.billSubmittedAmount / p.workValue) * 100)
+                : 0),
+            status: getProgressStatus(p.financialProgress || 0),
+          },
+        },
+      }));
 
     // Compile response
     res.status(200).json({
@@ -123,9 +174,9 @@ export const getArchiveProjectById = async (req, res) => {
         project: enrichedProject,
         metrics: projectMetrics,
         relatedProjects: {
-          byContractor: projectsByContractor,
-          byEngineer: projectsByEngineer,
-          byLocation: projectsByLocation,
+          byContractor: enhanceRelatedProjects(projectsByContractor),
+          byEngineer: enhanceRelatedProjects(projectsByEngineer),
+          byLocation: enhanceRelatedProjects(projectsByLocation),
         },
       },
       metadata: {
@@ -133,12 +184,13 @@ export const getArchiveProjectById = async (req, res) => {
         projectId: project._id,
         financialYear: project.financialYear,
         lastUpdated: project.updatedAt,
+        lastProgressUpdate: project.lastProgressUpdate,
+        lastFinancialProgressUpdate: project.lastFinancialProgressUpdate, // NEW
       },
     });
   } catch (error) {
     console.error("Error retrieving archive project by ID:", error);
 
-    // Handle specific mongoose errors
     if (error.name === "CastError") {
       return res.status(400).json({
         success: false,
@@ -151,7 +203,6 @@ export const getArchiveProjectById = async (req, res) => {
       });
     }
 
-    // Generic server error
     res.status(500).json({
       success: false,
       message:
@@ -167,6 +218,16 @@ export const getArchiveProjectById = async (req, res) => {
     });
   }
 };
+
+// Helper function for progress status
+function getProgressStatus(progress) {
+  if (!progress) return "Not Started";
+  if (progress < 25) return "Just Started";
+  if (progress < 50) return "In Progress";
+  if (progress < 75) return "Halfway Complete";
+  if (progress < 100) return "Near Completion";
+  return "Completed";
+}
 
 /**
  * Get archive project history/timeline

@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-// Schema for individual progress updates
+// Schema for individual progress updates (physical/work progress)
 const progressUpdateSchema = new mongoose.Schema(
   {
     previousProgress: {
@@ -34,9 +34,124 @@ const progressUpdateSchema = new mongoose.Schema(
           type: String,
           required: true,
         },
-        filePath: {
+        downloadURL: {
           type: String,
           required: true,
+        },
+        filePath: {
+          type: String,
+          required: true, // Firebase storage path for deletion
+        },
+        fileSize: {
+          type: Number,
+          required: true,
+        },
+        mimeType: {
+          type: String,
+          required: true,
+        },
+        fileType: {
+          type: String,
+          enum: ["document", "image"],
+          required: true,
+        },
+        uploadedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
+    updatedBy: {
+      userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        required: true,
+      },
+      userName: {
+        type: String,
+        required: true,
+      },
+      userDesignation: {
+        type: String,
+        required: true,
+      },
+    },
+    ipAddress: String,
+    userAgent: String,
+  },
+  {
+    timestamps: true,
+  }
+);
+
+// Schema for individual financial progress updates
+const financialProgressUpdateSchema = new mongoose.Schema(
+  {
+    previousFinancialProgress: {
+      type: Number,
+      min: [0, "Financial progress cannot be negative"],
+      max: [100, "Financial progress cannot exceed 100%"],
+      required: true,
+    },
+    newFinancialProgress: {
+      type: Number,
+      min: [0, "Financial progress cannot be negative"],
+      max: [100, "Financial progress cannot exceed 100%"],
+      required: true,
+    },
+    progressDifference: {
+      type: Number,
+      required: true,
+    },
+    previousBillAmount: {
+      type: Number,
+      min: [0, "Bill amount cannot be negative"],
+      required: true,
+    },
+    newBillAmount: {
+      type: Number,
+      min: [0, "Bill amount cannot be negative"],
+      required: true,
+    },
+    amountDifference: {
+      type: Number,
+      required: true,
+    },
+    remarks: {
+      type: String,
+      maxlength: [500, "Remarks cannot exceed 500 characters"],
+      trim: true,
+    },
+    billDetails: {
+      billNumber: {
+        type: String,
+        trim: true,
+      },
+      billDate: {
+        type: Date,
+      },
+      billDescription: {
+        type: String,
+        maxlength: [200, "Bill description cannot exceed 200 characters"],
+        trim: true,
+      },
+    },
+    supportingDocuments: [
+      {
+        fileName: {
+          type: String,
+          required: true,
+        },
+        originalName: {
+          type: String,
+          required: true,
+        },
+        downloadURL: {
+          type: String,
+          required: true,
+        },
+        filePath: {
+          type: String,
+          required: true, // Firebase storage path for deletion
         },
         fileSize: {
           type: Number,
@@ -136,12 +251,23 @@ const archiveProjectSchema = new mongoose.Schema(
     FWODate: {
       type: Date,
     },
+
+    // Physical/Work Progress
     progress: {
       type: Number,
       min: [0, "Progress cannot be negative"],
       max: [100, "Progress cannot exceed 100%"],
       default: 0,
     },
+
+    // Financial Progress
+    financialProgress: {
+      type: Number,
+      min: [0, "Financial progress cannot be negative"],
+      max: [100, "Financial progress cannot exceed 100%"],
+      default: 0,
+    },
+
     billSubmittedAmount: {
       type: Number,
       min: [0, "Bill submitted amount cannot be negative"],
@@ -173,17 +299,28 @@ const archiveProjectSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // Progress updates
+    // Progress updates (physical/work progress)
     progressUpdates: [progressUpdateSchema],
 
-    // Track last progress update
+    // Financial progress updates
+    financialProgressUpdates: [financialProgressUpdateSchema],
+
+    // Track last updates
     lastProgressUpdate: {
       type: Date,
       default: null,
     },
+    lastFinancialProgressUpdate: {
+      type: Date,
+      default: null,
+    },
 
-    // Track if project allows progress updates
+    // Track if updates are enabled
     progressUpdatesEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    financialProgressUpdatesEnabled: {
       type: Boolean,
       default: true,
     },
@@ -207,7 +344,11 @@ archiveProjectSchema.index({ createdAt: -1 });
 
 // New indexes for progress updates
 archiveProjectSchema.index({ "progressUpdates.createdAt": -1 });
+archiveProjectSchema.index({ "financialProgressUpdates.createdAt": -1 });
 archiveProjectSchema.index({ lastProgressUpdate: -1 });
+archiveProjectSchema.index({ lastFinancialProgressUpdate: -1 });
+archiveProjectSchema.index({ financialProgress: 1 });
+archiveProjectSchema.index({ progress: 1, financialProgress: 1 });
 
 // Text Index for searching
 archiveProjectSchema.index({
@@ -234,14 +375,66 @@ archiveProjectSchema.virtual("progressStatus").get(function () {
   return "Completed";
 });
 
-// New virtuals for progress updates
+// New virtuals for financial progress
+archiveProjectSchema.virtual("financialProgressStatus").get(function () {
+  if (!this.financialProgress) return "Not Started";
+  if (this.financialProgress < 25) return "Just Started";
+  if (this.financialProgress < 50) return "In Progress";
+  if (this.financialProgress < 75) return "Halfway Complete";
+  if (this.financialProgress < 100) return "Near Completion";
+  return "Completed";
+});
+
+archiveProjectSchema.virtual("remainingBillAmount").get(function () {
+  if (this.workValue && this.billSubmittedAmount) {
+    return this.workValue - this.billSubmittedAmount;
+  }
+  return this.workValue;
+});
+
+archiveProjectSchema.virtual("progressSummary").get(function () {
+  return {
+    physical: {
+      percentage: this.progress,
+      status: this.progressStatus,
+      lastUpdate: this.lastProgressUpdate,
+    },
+    financial: {
+      percentage: this.financialProgress,
+      status: this.financialProgressStatus,
+      lastUpdate: this.lastFinancialProgressUpdate,
+      amountSubmitted: this.billSubmittedAmount,
+      amountRemaining: this.remainingBillAmount,
+    },
+  };
+});
+
+// Progress update virtuals
 archiveProjectSchema.virtual("totalProgressUpdates").get(function () {
   return this.progressUpdates ? this.progressUpdates.length : 0;
+});
+
+archiveProjectSchema.virtual("totalFinancialProgressUpdates").get(function () {
+  return this.financialProgressUpdates
+    ? this.financialProgressUpdates.length
+    : 0;
 });
 
 archiveProjectSchema.virtual("latestProgressUpdate").get(function () {
   if (this.progressUpdates && this.progressUpdates.length > 0) {
     return this.progressUpdates[this.progressUpdates.length - 1];
+  }
+  return null;
+});
+
+archiveProjectSchema.virtual("latestFinancialProgressUpdate").get(function () {
+  if (
+    this.financialProgressUpdates &&
+    this.financialProgressUpdates.length > 0
+  ) {
+    return this.financialProgressUpdates[
+      this.financialProgressUpdates.length - 1
+    ];
   }
   return null;
 });
@@ -258,6 +451,13 @@ archiveProjectSchema.pre("save", function (next) {
 
   if (this.AADated > new Date()) {
     next(new Error("A.A date cannot be in the future"));
+  }
+
+  // Auto-calculate financial progress based on bill amount
+  if (this.workValue > 0) {
+    this.financialProgress = Math.round(
+      (this.billSubmittedAmount / this.workValue) * 100
+    );
   }
 
   next();
@@ -280,7 +480,7 @@ archiveProjectSchema.statics.findByEngineer = function (
     .limit(limit);
 };
 
-// New static method for progress update statistics
+// Progress update statistics
 archiveProjectSchema.statics.getProgressUpdateStats = function (filter = {}) {
   return this.aggregate([
     { $match: filter },
@@ -300,13 +500,47 @@ archiveProjectSchema.statics.getProgressUpdateStats = function (filter = {}) {
   ]);
 };
 
+// Financial progress update statistics
+archiveProjectSchema.statics.getFinancialProgressUpdateStats = function (
+  filter = {}
+) {
+  return this.aggregate([
+    { $match: filter },
+    { $unwind: "$financialProgressUpdates" },
+    {
+      $group: {
+        _id: null,
+        totalUpdates: { $sum: 1 },
+        avgProgressIncrease: {
+          $avg: "$financialProgressUpdates.progressDifference",
+        },
+        avgAmountIncrease: {
+          $avg: "$financialProgressUpdates.amountDifference",
+        },
+        totalAmountSubmitted: {
+          $sum: "$financialProgressUpdates.amountDifference",
+        },
+        maxProgressIncrease: {
+          $max: "$financialProgressUpdates.progressDifference",
+        },
+        minProgressIncrease: {
+          $min: "$financialProgressUpdates.progressDifference",
+        },
+        totalFilesUploaded: {
+          $sum: { $size: "$financialProgressUpdates.supportingDocuments" },
+        },
+      },
+    },
+  ]);
+};
+
 // Instance methods
 archiveProjectSchema.methods.calculateFinancialProgress = function () {
   if (!this.billSubmittedAmount || !this.workValue) return 0;
   return Math.round((this.billSubmittedAmount / this.workValue) * 100);
 };
 
-// New instance method to add progress update
+// Add progress update method
 archiveProjectSchema.methods.addProgressUpdate = function (
   updateData,
   userInfo
@@ -337,7 +571,54 @@ archiveProjectSchema.methods.addProgressUpdate = function (
   return this.save();
 };
 
-// New instance method to get progress update history with pagination
+// Add financial progress update method
+archiveProjectSchema.methods.addFinancialProgressUpdate = function (
+  updateData,
+  userInfo
+) {
+  const previousFinancialProgress = this.financialProgress;
+  const previousBillAmount = this.billSubmittedAmount;
+
+  const newBillAmount = updateData.newBillAmount;
+  const newFinancialProgress =
+    this.workValue > 0 ? Math.round((newBillAmount / this.workValue) * 100) : 0;
+
+  const progressDifference = newFinancialProgress - previousFinancialProgress;
+  const amountDifference = newBillAmount - previousBillAmount;
+
+  const financialProgressUpdate = {
+    previousFinancialProgress,
+    newFinancialProgress,
+    progressDifference,
+    previousBillAmount,
+    newBillAmount,
+    amountDifference,
+    remarks: updateData.remarks,
+    billDetails: updateData.billDetails || {},
+    supportingDocuments: updateData.supportingDocuments || [],
+    updatedBy: {
+      userId: userInfo.userId,
+      userName: userInfo.userName,
+      userDesignation: userInfo.userDesignation,
+    },
+    ipAddress: updateData.ipAddress,
+    userAgent: updateData.userAgent,
+  };
+
+  this.financialProgressUpdates.push(financialProgressUpdate);
+  this.billSubmittedAmount = newBillAmount;
+  this.financialProgress = newFinancialProgress;
+  this.lastFinancialProgressUpdate = new Date();
+
+  // Update bill number if provided
+  if (updateData.billDetails && updateData.billDetails.billNumber) {
+    this.billNumber = updateData.billDetails.billNumber;
+  }
+
+  return this.save();
+};
+
+// Get progress update history
 archiveProjectSchema.methods.getProgressUpdateHistory = function (
   page = 1,
   limit = 10
@@ -353,6 +634,26 @@ archiveProjectSchema.methods.getProgressUpdateHistory = function (
     currentPage: page,
     totalPages: Math.ceil(this.progressUpdates.length / limit),
     hasNextPage: page < Math.ceil(this.progressUpdates.length / limit),
+    hasPrevPage: page > 1,
+  };
+};
+
+// Get financial progress update history
+archiveProjectSchema.methods.getFinancialProgressUpdateHistory = function (
+  page = 1,
+  limit = 10
+) {
+  const skip = (page - 1) * limit;
+  const updates = this.financialProgressUpdates
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(skip, skip + limit);
+
+  return {
+    updates,
+    totalUpdates: this.financialProgressUpdates.length,
+    currentPage: page,
+    totalPages: Math.ceil(this.financialProgressUpdates.length / limit),
+    hasNextPage: page < Math.ceil(this.financialProgressUpdates.length / limit),
     hasPrevPage: page > 1,
   };
 };
