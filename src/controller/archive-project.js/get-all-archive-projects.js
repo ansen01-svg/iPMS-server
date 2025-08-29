@@ -4,7 +4,7 @@ const getAllArchiveProjects = async (req, res) => {
   try {
     // Pagination parameters
     const page = parseInt(req.query.page) || 1;
-    const limit = Math.min(parseInt(req.query.limit) || 5, 10); // Max 10 items per page
+    const limit = Math.min(parseInt(req.query.limit) || 5, 10);
     const skip = (page - 1) * limit;
 
     // Search parameter
@@ -15,7 +15,7 @@ const getAllArchiveProjects = async (req, res) => {
     const sortOrder = req.query.sortOrder === "asc" ? 1 : -1;
     const sort = { [sortBy]: sortOrder };
 
-    // Build filter object
+    // Build filter object (existing filters remain the same)
     const filter = {};
 
     // Financial Year filter
@@ -41,7 +41,6 @@ const getAllArchiveProjects = async (req, res) => {
       if (Array.isArray(req.query.nameOfContractor)) {
         filter.nameOfContractor = { $in: req.query.nameOfContractor };
       } else {
-        // Partial match for contractor names
         filter.nameOfContractor = new RegExp(req.query.nameOfContractor, "i");
       }
     }
@@ -77,7 +76,7 @@ const getAllArchiveProjects = async (req, res) => {
       }
     }
 
-    // Progress range filter
+    // Progress range filter (physical progress)
     if (
       req.query.minProgress !== undefined ||
       req.query.maxProgress !== undefined
@@ -91,7 +90,25 @@ const getAllArchiveProjects = async (req, res) => {
       }
     }
 
-    // Progress status filter (using virtual field logic)
+    // NEW: Financial Progress range filter
+    if (
+      req.query.minFinancialProgress !== undefined ||
+      req.query.maxFinancialProgress !== undefined
+    ) {
+      filter.financialProgress = {};
+      if (req.query.minFinancialProgress !== undefined) {
+        filter.financialProgress.$gte = parseFloat(
+          req.query.minFinancialProgress
+        );
+      }
+      if (req.query.maxFinancialProgress !== undefined) {
+        filter.financialProgress.$lte = parseFloat(
+          req.query.maxFinancialProgress
+        );
+      }
+    }
+
+    // Progress status filter (physical progress)
     if (req.query.progressStatus) {
       const statusMapping = {
         "Not Started": { progress: { $eq: 0 } },
@@ -107,14 +124,41 @@ const getAllArchiveProjects = async (req, res) => {
           .filter((status) => statusMapping[status])
           .map((status) => statusMapping[status]);
         if (statusFilters.length > 0) {
-          filter.$or = statusFilters;
+          filter.$or = filter.$or
+            ? [...filter.$or, ...statusFilters]
+            : statusFilters;
         }
       } else if (statusMapping[req.query.progressStatus]) {
         Object.assign(filter, statusMapping[req.query.progressStatus]);
       }
     }
 
-    // Date range filters
+    // NEW: Financial Progress status filter
+    if (req.query.financialProgressStatus) {
+      const statusMapping = {
+        "Not Started": { financialProgress: { $eq: 0 } },
+        "Just Started": { financialProgress: { $gt: 0, $lt: 25 } },
+        "In Progress": { financialProgress: { $gte: 25, $lt: 50 } },
+        "Halfway Complete": { financialProgress: { $gte: 50, $lt: 75 } },
+        "Near Completion": { financialProgress: { $gte: 75, $lt: 100 } },
+        Completed: { financialProgress: { $eq: 100 } },
+      };
+
+      if (Array.isArray(req.query.financialProgressStatus)) {
+        const statusFilters = req.query.financialProgressStatus
+          .filter((status) => statusMapping[status])
+          .map((status) => statusMapping[status]);
+        if (statusFilters.length > 0) {
+          filter.$or = filter.$or
+            ? [...filter.$or, ...statusFilters]
+            : statusFilters;
+        }
+      } else if (statusMapping[req.query.financialProgressStatus]) {
+        Object.assign(filter, statusMapping[req.query.financialProgressStatus]);
+      }
+    }
+
+    // Date range filters (existing ones remain the same)
     if (req.query.startAADate || req.query.endAADate) {
       filter.AADated = {};
       if (req.query.startAADate) {
@@ -135,7 +179,6 @@ const getAllArchiveProjects = async (req, res) => {
       }
     }
 
-    // Created date range filter
     if (req.query.startCreatedDate || req.query.endCreatedDate) {
       filter.createdAt = {};
       if (req.query.startCreatedDate) {
@@ -146,12 +189,11 @@ const getAllArchiveProjects = async (req, res) => {
       }
     }
 
-    // Bill Number filter (exact match)
+    // Bill Number and AA Number filters (existing)
     if (req.query.billNumber) {
       filter.billNumber = req.query.billNumber;
     }
 
-    // AA Number filter (exact match)
     if (req.query.AANumber) {
       filter.AANumber = req.query.AANumber;
     }
@@ -162,7 +204,6 @@ const getAllArchiveProjects = async (req, res) => {
     // Apply text search if provided
     if (search) {
       query = query.find({ $text: { $search: search } });
-      // Add text search score for sorting
       query = query.select({ score: { $meta: "textScore" } });
       sort.score = { $meta: "textScore" };
     }
@@ -170,7 +211,7 @@ const getAllArchiveProjects = async (req, res) => {
     // Apply filters
     query = query.find(filter);
 
-    // Get total count for pagination (before applying skip/limit)
+    // Get total count for pagination
     const totalQuery = search
       ? ArchiveProject.find({ $text: { $search: search } }).find(filter)
       : ArchiveProject.find(filter);
@@ -178,9 +219,9 @@ const getAllArchiveProjects = async (req, res) => {
     const totalDocuments = await totalQuery.countDocuments();
 
     // Apply sorting, pagination
-    const projects = await query.sort(sort).skip(skip).limit(limit).lean(); // Use lean() for better performance
+    const projects = await query.sort(sort).skip(skip).limit(limit).lean();
 
-    // Calculate virtual fields for each project
+    // UPDATED: Calculate virtual fields for each project including financial progress
     const projectsWithVirtuals = projects.map((project) => {
       // Calculate remaining work value
       const remainingWorkValue =
@@ -188,7 +229,7 @@ const getAllArchiveProjects = async (req, res) => {
           ? project.workValue - project.billSubmittedAmount
           : project.workValue;
 
-      // Calculate progress status
+      // Calculate progress status (physical)
       let progressStatus = "Not Started";
       if (project.progress) {
         if (project.progress < 25) progressStatus = "Just Started";
@@ -198,8 +239,22 @@ const getAllArchiveProjects = async (req, res) => {
         else progressStatus = "Completed";
       }
 
-      // Calculate financial progress
-      const financialProgress =
+      // NEW: Calculate financial progress status
+      let financialProgressStatus = "Not Started";
+      if (project.financialProgress) {
+        if (project.financialProgress < 25)
+          financialProgressStatus = "Just Started";
+        else if (project.financialProgress < 50)
+          financialProgressStatus = "In Progress";
+        else if (project.financialProgress < 75)
+          financialProgressStatus = "Halfway Complete";
+        else if (project.financialProgress < 100)
+          financialProgressStatus = "Near Completion";
+        else financialProgressStatus = "Completed";
+      }
+
+      // Calculate financial progress percentage (should match model calculation)
+      const calculatedFinancialProgress =
         project.billSubmittedAmount && project.workValue
           ? Math.round((project.billSubmittedAmount / project.workValue) * 100)
           : 0;
@@ -208,7 +263,25 @@ const getAllArchiveProjects = async (req, res) => {
         ...project,
         remainingWorkValue,
         progressStatus,
-        financialProgress,
+        financialProgressStatus, // NEW
+        financialProgress:
+          project.financialProgress || calculatedFinancialProgress, // NEW
+        progressSummary: {
+          // NEW: Combined progress summary
+          physical: {
+            percentage: project.progress || 0,
+            status: progressStatus,
+            lastUpdate: project.lastProgressUpdate,
+          },
+          financial: {
+            percentage:
+              project.financialProgress || calculatedFinancialProgress,
+            status: financialProgressStatus,
+            lastUpdate: project.lastFinancialProgressUpdate,
+            amountSubmitted: project.billSubmittedAmount || 0,
+            amountRemaining: remainingWorkValue,
+          },
+        },
       };
     });
 
@@ -217,53 +290,94 @@ const getAllArchiveProjects = async (req, res) => {
     const hasNextPage = page < totalPages;
     const hasPrevPage = page > 1;
 
-    // Generate summary statistics
-    const statsQuery = search
-      ? ArchiveProject.find({ $text: { $search: search } }).find(filter)
-      : ArchiveProject.find(filter);
+    // UPDATED: Enhanced summary statistics with financial progress
+    const summary = await ArchiveProject.aggregate([
+      { $match: search ? { $text: { $search: search }, ...filter } : filter },
+      {
+        $group: {
+          _id: null,
+          totalProjects: { $sum: 1 },
+          totalWorkValue: { $sum: "$workValue" },
+          totalAAAmount: { $sum: "$AAAmount" },
+          totalBillSubmitted: { $sum: "$billSubmittedAmount" },
+          avgProgress: { $avg: "$progress" },
+          avgFinancialProgress: { $avg: "$financialProgress" }, // NEW
+          completedProjects: {
+            $sum: { $cond: [{ $eq: ["$progress", 100] }, 1, 0] },
+          },
+          financiallyCompletedProjects: {
+            // NEW
+            $sum: { $cond: [{ $eq: ["$financialProgress", 100] }, 1, 0] },
+          },
+          fullyCompletedProjects: {
+            // NEW: Both physical and financial complete
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$progress", 100] },
+                    { $eq: ["$financialProgress", 100] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          inProgressProjects: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gt: ["$progress", 0] },
+                    { $lt: ["$progress", 100] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          financiallyInProgressProjects: {
+            // NEW
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gt: ["$financialProgress", 0] },
+                    { $lt: ["$financialProgress", 100] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          notStartedProjects: {
+            $sum: { $cond: [{ $eq: ["$progress", 0] }, 1, 0] },
+          },
+          financiallyNotStartedProjects: {
+            // NEW
+            $sum: { $cond: [{ $eq: ["$financialProgress", 0] }, 1, 0] },
+          },
+        },
+      },
+    ]);
 
-    // const stats = await statsQuery.aggregate([
-    //   {
-    //     $group: {
-    //       _id: null,
-    //       totalProjects: { $sum: 1 },
-    //       totalWorkValue: { $sum: "$workValue" },
-    //       totalAAAmount: { $sum: "$AAAmount" },
-    //       totalBillSubmitted: { $sum: "$billSubmittedAmount" },
-    //       avgProgress: { $avg: "$progress" },
-    //       completedProjects: {
-    //         $sum: { $cond: [{ $eq: ["$progress", 100] }, 1, 0] },
-    //       },
-    //       inProgressProjects: {
-    //         $sum: {
-    //           $cond: [
-    //             {
-    //               $and: [
-    //                 { $gt: ["$progress", 0] },
-    //                 { $lt: ["$progress", 100] },
-    //               ],
-    //             },
-    //             1,
-    //             0,
-    //           ],
-    //         },
-    //       },
-    //       notStartedProjects: {
-    //         $sum: { $cond: [{ $eq: ["$progress", 0] }, 1, 0] },
-    //       },
-    //     },
-    //   },
-    // ]);
-
-    const summary = {
+    const summaryData = summary[0] || {
       totalProjects: 0,
       totalWorkValue: 0,
       totalAAAmount: 0,
       totalBillSubmitted: 0,
       avgProgress: 0,
+      avgFinancialProgress: 0,
       completedProjects: 0,
+      financiallyCompletedProjects: 0,
+      fullyCompletedProjects: 0,
       inProgressProjects: 0,
+      financiallyInProgressProjects: 0,
       notStartedProjects: 0,
+      financiallyNotStartedProjects: 0,
     };
 
     // Response
@@ -281,14 +395,40 @@ const getAllArchiveProjects = async (req, res) => {
         skip,
       },
       summary: {
-        ...summary,
-        avgProgress: Math.round(summary.avgProgress * 100) / 100, // Round to 2 decimal places
+        ...summaryData,
+        avgProgress: Math.round(summaryData.avgProgress * 100) / 100,
+        avgFinancialProgress:
+          Math.round(summaryData.avgFinancialProgress * 100) / 100, // NEW
         totalRemainingValue:
-          summary.totalWorkValue - summary.totalBillSubmitted,
+          summaryData.totalWorkValue - summaryData.totalBillSubmitted,
         completionRate:
-          summary.totalProjects > 0
+          summaryData.totalProjects > 0
             ? Math.round(
-                (summary.completedProjects / summary.totalProjects) * 100
+                (summaryData.completedProjects / summaryData.totalProjects) *
+                  100
+              )
+            : 0,
+        financialCompletionRate:
+          summaryData.totalProjects > 0 // NEW
+            ? Math.round(
+                (summaryData.financiallyCompletedProjects /
+                  summaryData.totalProjects) *
+                  100
+              )
+            : 0,
+        fullCompletionRate:
+          summaryData.totalProjects > 0 // NEW
+            ? Math.round(
+                (summaryData.fullyCompletedProjects /
+                  summaryData.totalProjects) *
+                  100
+              )
+            : 0,
+        billSubmissionRate:
+          summaryData.totalWorkValue > 0 // NEW
+            ? Math.round(
+                (summaryData.totalBillSubmitted / summaryData.totalWorkValue) *
+                  100
               )
             : 0,
       },
@@ -302,7 +442,6 @@ const getAllArchiveProjects = async (req, res) => {
   } catch (error) {
     console.error("Error retrieving archive projects:", error);
 
-    // Handle specific errors
     if (error.name === "CastError") {
       return res.status(400).json({
         success: false,
@@ -315,7 +454,6 @@ const getAllArchiveProjects = async (req, res) => {
       });
     }
 
-    // Generic server error
     res.status(500).json({
       success: false,
       message:
