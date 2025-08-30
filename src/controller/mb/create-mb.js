@@ -1,5 +1,5 @@
-import ArchiveProject from "../../models/archive-project.model.js";
 import MeasurementBook from "../../models/mb.model.js";
+import Project from "../../models/project.model.js";
 
 const createMeasurementBook = async (req, res) => {
   try {
@@ -34,7 +34,7 @@ const createMeasurementBook = async (req, res) => {
     }
 
     // Check if project exists
-    const existingProject = await ArchiveProject.findById(project);
+    const existingProject = await Project.findById(project);
     if (!existingProject) {
       return res.status(404).json({
         success: false,
