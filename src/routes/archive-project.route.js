@@ -43,6 +43,12 @@ import {
   validateFinancialProgressStatisticsQuery,
 } from "../middlewares/validate-archive-project-financial-progress.middleware.js";
 
+import {
+  generateBulkProjectSummaryPDF,
+  generateProjectSummaryPDFController,
+  getPDFGenerationOptions,
+} from "../controller/archive-project.js/generate-pdf.js";
+
 // NEW: Import the model for utility routes
 import ArchiveProject from "../models/archive-project.model.js";
 
@@ -163,6 +169,39 @@ router.put(
   }),
   ...validateCompleteCombinedProgressUpdate,
   updateCombinedProgress
+);
+
+// ==========================================
+// NEW: PDF GENERATION ROUTES
+// ==========================================
+
+// Get PDF generation options for a specific project
+router.get("/:id/pdf-options", requireLogin(), getPDFGenerationOptions);
+
+// Generate and download project summary PDF
+router.get(
+  "/:id/download-summary-pdf",
+  requireLogin(),
+  generateProjectSummaryPDFController
+);
+
+// Alternative POST route for PDF generation with custom options
+router.post(
+  "/:id/generate-summary-pdf",
+  requireLogin(),
+  async (req, res, next) => {
+    // Convert POST body parameters to query parameters for consistency
+    req.query = { ...req.query, ...req.body };
+    next();
+  },
+  generateProjectSummaryPDFController
+);
+
+// Bulk PDF generation for multiple projects (Admin/JE only)
+router.post(
+  "/bulk/generate-summary-pdf",
+  requireJe(), // Could be requireAdmin() in production
+  generateBulkProjectSummaryPDF
 );
 
 // ==========================================
