@@ -40,16 +40,6 @@ const getAllProjects = async (req, res) => {
         );
         break;
 
-      case "EXECUTOR":
-        // Filter and return all projects except those with status = "Submitted to AEE", "Submitted to CE" and "Submitted to MD"
-        projects = allProjects.filter(
-          (project) =>
-            project.status !== "Submitted to AEE" &&
-            project.status !== "Submitted to CE" &&
-            project.status !== "Submitted to MD"
-        );
-        break;
-
       case "VIEWER":
         // Filter and return only projects with status = "Approved", "Ongoing" and "Completed"
         projects = allProjects.filter(
