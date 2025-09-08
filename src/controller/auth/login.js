@@ -1,118 +1,49 @@
 import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
-import jwt from "jsonwebtoken";
 import User from "../../models/user.model.js";
+import OTP from "../../models/otp.model.js"; // your OTP schema
+import crypto from "crypto";
 
 dotenv.config();
-
-const JWT_SECRET = process.env.JWT_SECRET;
 
 const login = async (req, res) => {
   try {
     const { userId, password } = req.body;
 
-    // Input validation
     if (!userId || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "User ID and password are required",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "User ID and password are required" });
     }
 
-    // Find user by userId
     const user = await User.findOne({ userId: userId.trim() });
     if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials",
-      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
     }
 
-    // Compare password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials",
-      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
     }
 
-    // Create JWT payload
-    const payload = {
-      id: user._id,
-      userId: user.userId,
-      role: user.designation,
-      email: user.email,
-      name: user.fullName || "Incomplete User",
-      departmentName: user.departmentName || "Unknown Department",
-    };
+    //  Generate OTP (6-digit random number)
+    const otp = crypto.randomInt(100000, 999999).toString();
 
-    // Sign JWT token
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "1h" });
+    //  Save OTP to DB (expires in 5 min)
+    await OTP.create({ email: user.email, otp });
 
-    // Set token in cookie
-    // res.cookie("token", token, {
-    //   httpOnly: true,
-    //   secure: process.env.NODE_ENV === "production",
-    //   sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
-    //   domain: process.env.NODE_ENV === "production" ? ".aptdcl.in" : undefined,
-    //   maxAge: 3600000, // 1 hour
-    // });
-
-    // Determine message and requirePasswordChange based on first login status
-    const message = user.isFirstLogin
-      ? "First login - Please change your password"
-      : "Login successful";
-
-    // Method 1: Standard cookie
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 24 * 60 * 60 * 1000,
-      path: "/",
-    });
-
-    // Method 2: More restrictive
-    res.cookie("backup-token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict", // More restrictive
-      maxAge: 24 * 60 * 60 * 1000,
-      path: "/",
-    });
-
-    // Method 3: Base64 encoded - Helps with encoding issues
-    const encodedToken = Buffer.from(token).toString("base64");
-    res.cookie("encoded-token", encodedToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 24 * 60 * 60 * 1000,
-      path: "/",
-    });
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: message,
-      requirePasswordChange: user.isFirstLogin,
-      token: token,
-      user: {
-        id: user._id,
-        userId: user.userId,
-        name: user.fullName,
-        username: user.username,
-        email: user.email,
-        role: user.designation,
-        departmentName: user.departmentName,
-      },
+      message: "OTP sent to your email. Please verify to complete login.",
+      email: user.email, // you may hide this in production
     });
   } catch (error) {
     console.error("Login error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 };
 

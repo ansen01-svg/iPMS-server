@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import User from "../../models/user.model.js";
+import { sendMail } from "../../utils/mailSender.js";
 
 // This function generates a random password with at least one uppercase letter,
 // one lowercase letter, one number, and one special character.
@@ -114,6 +115,22 @@ const createUser = async (req, res) => {
     });
 
     const savedUser = await newUser.save();
+
+    try {
+      await sendMail(
+        savedUser.email,
+        "Your APTDCL Account Credentials",
+        `
+          <h2>Welcome ${savedUser.fullName || ""}</h2>
+          <p>Your account has been created successfully.</p>
+          <p><strong>User ID:</strong> ${savedUser.userId}</p>
+          <p><strong>Temporary Password:</strong> ${plainPassword}</p>
+          <p>Please change your password after first login.</p>
+        `
+      );
+    } catch (mailError) {
+      console.error(" Failed to send email:", mailError);
+    }
 
     res.status(201).json({
       success: true,

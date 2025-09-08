@@ -104,6 +104,9 @@ app.use(express.static("./public"));
 // 5. ROUTES
 // ----------------------------------------
 
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 // // Root route
 app.get("/", (req, res) => {
   res.send("iPMS API is running");
