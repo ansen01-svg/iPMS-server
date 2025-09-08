@@ -2,7 +2,7 @@ import Project from "../../models/project.model.js";
 
 export const getProjectsSummary = async (req, res) => {
   try {
-    const { status, district, fund, createdBy, typeOfWork, natureOfWork } =
+    const { status, district, fund, createdBy, typeOfWork, contractorName } =
       req.query;
     const filter = {};
 
@@ -12,7 +12,7 @@ export const getProjectsSummary = async (req, res) => {
     if (fund) filter.fund = fund;
     if (createdBy) filter["createdBy.userId"] = createdBy;
     if (typeOfWork) filter.typeOfWork = typeOfWork;
-    if (natureOfWork) filter.natureOfWork = natureOfWork;
+    if (contractorName) filter.contractorName = new RegExp(contractorName, "i");
 
     const summary = await Project.aggregate([
       { $match: filter },
@@ -124,6 +124,14 @@ export const getProjectsSummary = async (req, res) => {
           projectsWithSubProjects: {
             $sum: { $cond: [{ $eq: ["$hasSubProjects", true] }, 1, 0] },
           },
+
+          // Contractor statistics
+          uniqueContractors: { $addToSet: "$contractorName" },
+        },
+      },
+      {
+        $addFields: {
+          totalUniqueContractors: { $size: "$uniqueContractors" },
         },
       },
     ]);
@@ -155,10 +163,11 @@ export const getProjectsSummary = async (req, res) => {
       totalFinancialProgressUpdates: 0,
       totalSubProjects: 0,
       projectsWithSubProjects: 0,
+      totalUniqueContractors: 0,
     };
 
     // Get top performers by different criteria
-    const [topDistricts, topFunds, topCreators, topTypeOfWork] =
+    const [topDistricts, topFunds, topCreators, topTypeOfWork, topContractors] =
       await Promise.all([
         // Top districts by project count and value
         Project.aggregate([
@@ -173,6 +182,12 @@ export const getProjectsSummary = async (req, res) => {
               completedProjects: {
                 $sum: { $cond: [{ $eq: ["$progressPercentage", 100] }, 1, 0] },
               },
+              uniqueContractors: { $addToSet: "$contractorName" },
+            },
+          },
+          {
+            $addFields: {
+              contractorCount: { $size: "$uniqueContractors" },
             },
           },
           { $sort: { projectCount: -1 } },
@@ -192,6 +207,12 @@ export const getProjectsSummary = async (req, res) => {
               completedProjects: {
                 $sum: { $cond: [{ $eq: ["$progressPercentage", 100] }, 1, 0] },
               },
+              uniqueContractors: { $addToSet: "$contractorName" },
+            },
+          },
+          {
+            $addFields: {
+              contractorCount: { $size: "$uniqueContractors" },
             },
           },
           { $sort: { totalValue: -1 } },
@@ -215,6 +236,12 @@ export const getProjectsSummary = async (req, res) => {
               completedProjects: {
                 $sum: { $cond: [{ $eq: ["$progressPercentage", 100] }, 1, 0] },
               },
+              uniqueContractors: { $addToSet: "$contractorName" },
+            },
+          },
+          {
+            $addFields: {
+              contractorCount: { $size: "$uniqueContractors" },
             },
           },
           { $sort: { projectCount: -1 } },
@@ -234,10 +261,66 @@ export const getProjectsSummary = async (req, res) => {
               completedProjects: {
                 $sum: { $cond: [{ $eq: ["$progressPercentage", 100] }, 1, 0] },
               },
+              uniqueContractors: { $addToSet: "$contractorName" },
+            },
+          },
+          {
+            $addFields: {
+              contractorCount: { $size: "$uniqueContractors" },
             },
           },
           { $sort: { projectCount: -1 } },
           { $limit: 10 },
+        ]),
+
+        // Top contractors by project count and performance
+        Project.aggregate([
+          { $match: filter },
+          {
+            $group: {
+              _id: {
+                contractorName: "$contractorName",
+                contractorPhone: "$contractorPhoneNumber",
+              },
+              projectCount: { $sum: 1 },
+              totalValue: { $sum: "$estimatedCost" },
+              totalBillSubmitted: { $sum: "$billSubmittedAmount" },
+              avgPhysicalProgress: { $avg: "$progressPercentage" },
+              avgFinancialProgress: { $avg: "$financialProgress" },
+              completedProjects: {
+                $sum: { $cond: [{ $eq: ["$progressPercentage", 100] }, 1, 0] },
+              },
+              financiallyCompletedProjects: {
+                $sum: { $cond: [{ $eq: ["$financialProgress", 100] }, 1, 0] },
+              },
+              ongoingProjects: {
+                $sum: { $cond: [{ $eq: ["$status", "Ongoing"] }, 1, 0] },
+              },
+              districts: { $addToSet: "$district" },
+              workTypes: { $addToSet: "$typeOfWork" },
+            },
+          },
+          {
+            $addFields: {
+              districtCount: { $size: "$districts" },
+              workTypeCount: { $size: "$workTypes" },
+              avgProjectValue: { $divide: ["$totalValue", "$projectCount"] },
+              budgetUtilization: {
+                $cond: [
+                  { $gt: ["$totalValue", 0] },
+                  {
+                    $multiply: [
+                      { $divide: ["$totalBillSubmitted", "$totalValue"] },
+                      100,
+                    ],
+                  },
+                  0,
+                ],
+              },
+            },
+          },
+          { $sort: { projectCount: -1 } },
+          { $limit: 15 },
         ]),
       ]);
 
@@ -311,6 +394,14 @@ export const getProjectsSummary = async (req, res) => {
       approvalPipelineProjects:
         result.submittedToAEE + result.submittedToCE + result.submittedToMD,
       activeProjects: result.approvedProjects + result.ongoingProjects,
+
+      // Contractor metrics
+      avgProjectsPerContractor:
+        result.totalUniqueContractors > 0
+          ? Math.round(
+              (result.totalProjects / result.totalUniqueContractors) * 100
+            ) / 100
+          : 0,
     };
 
     // Format response data
@@ -324,6 +415,7 @@ export const getProjectsSummary = async (req, res) => {
         avgFinancialProgress:
           Math.round(district.avgFinancialProgress * 100) / 100,
         completedProjects: district.completedProjects,
+        contractorCount: district.contractorCount,
         completionRate:
           district.projectCount > 0
             ? Math.round(
@@ -339,6 +431,7 @@ export const getProjectsSummary = async (req, res) => {
         avgPhysicalProgress: Math.round(fund.avgPhysicalProgress * 100) / 100,
         avgFinancialProgress: Math.round(fund.avgFinancialProgress * 100) / 100,
         completedProjects: fund.completedProjects,
+        contractorCount: fund.contractorCount,
         completionRate:
           fund.projectCount > 0
             ? Math.round((fund.completedProjects / fund.projectCount) * 100)
@@ -356,6 +449,7 @@ export const getProjectsSummary = async (req, res) => {
         avgFinancialProgress:
           Math.round(creator.avgFinancialProgress * 100) / 100,
         completedProjects: creator.completedProjects,
+        contractorCount: creator.contractorCount,
         completionRate:
           creator.projectCount > 0
             ? Math.round(
@@ -371,9 +465,43 @@ export const getProjectsSummary = async (req, res) => {
         avgPhysicalProgress: Math.round(type.avgPhysicalProgress * 100) / 100,
         avgFinancialProgress: Math.round(type.avgFinancialProgress * 100) / 100,
         completedProjects: type.completedProjects,
+        contractorCount: type.contractorCount,
         completionRate:
           type.projectCount > 0
             ? Math.round((type.completedProjects / type.projectCount) * 100)
+            : 0,
+      })),
+
+      contractors: topContractors.map((contractor) => ({
+        contractorName: contractor._id.contractorName,
+        contractorPhone: contractor._id.contractorPhone,
+        projectCount: contractor.projectCount,
+        totalValue: contractor.totalValue,
+        totalBillSubmitted: contractor.totalBillSubmitted,
+        avgPhysicalProgress:
+          Math.round(contractor.avgPhysicalProgress * 100) / 100,
+        avgFinancialProgress:
+          Math.round(contractor.avgFinancialProgress * 100) / 100,
+        completedProjects: contractor.completedProjects,
+        financiallyCompletedProjects: contractor.financiallyCompletedProjects,
+        ongoingProjects: contractor.ongoingProjects,
+        districtCount: contractor.districtCount,
+        workTypeCount: contractor.workTypeCount,
+        avgProjectValue: Math.round(contractor.avgProjectValue),
+        budgetUtilization: Math.round(contractor.budgetUtilization * 100) / 100,
+        physicalCompletionRate:
+          contractor.projectCount > 0
+            ? Math.round(
+                (contractor.completedProjects / contractor.projectCount) * 100
+              )
+            : 0,
+        financialCompletionRate:
+          contractor.projectCount > 0
+            ? Math.round(
+                (contractor.financiallyCompletedProjects /
+                  contractor.projectCount) *
+                  100
+              )
             : 0,
       })),
     };
@@ -421,6 +549,10 @@ export const getProjectsSummary = async (req, res) => {
           avgUpdatesPerProject: derivedMetrics.avgUpdatesPerProject,
           avgProgressGap: Math.round(derivedMetrics.avgProgressGap * 100) / 100,
         },
+        contractorMetrics: {
+          totalUniqueContractors: result.totalUniqueContractors,
+          avgProjectsPerContractor: derivedMetrics.avgProjectsPerContractor,
+        },
       },
       filters: {
         status: status || null,
@@ -428,12 +560,13 @@ export const getProjectsSummary = async (req, res) => {
         fund: fund || null,
         createdBy: createdBy || null,
         typeOfWork: typeOfWork || null,
-        natureOfWork: natureOfWork || null,
+        contractorName: contractorName || null,
       },
       metadata: {
         generatedAt: new Date().toISOString(),
         dataFreshness: "real-time",
         totalProjectsAnalyzed: result.totalProjects,
+        totalContractorsAnalyzed: result.totalUniqueContractors,
       },
     });
   } catch (error) {
@@ -458,11 +591,13 @@ export const getProjectsSummary = async (req, res) => {
  */
 export const getDistrictWiseProjectsSummary = async (req, res) => {
   try {
-    const { status, fund, timeRange } = req.query;
+    const { status, fund, timeRange, contractorName } = req.query;
     const filter = {};
 
     if (status) filter.status = status;
     if (fund) filter.fund = fund;
+    if (contractorName) filter.contractorName = new RegExp(contractorName, "i");
+
     if (timeRange) {
       const endDate = new Date();
       const startDate = new Date();
@@ -527,6 +662,21 @@ export const getDistrictWiseProjectsSummary = async (req, res) => {
           totalFinancialProgressUpdates: {
             $sum: { $size: "$financialProgressUpdates" },
           },
+          uniqueContractors: { $addToSet: "$contractorName" },
+          topContractors: {
+            $push: {
+              contractor: "$contractorName",
+              phone: "$contractorPhoneNumber",
+              estimatedCost: "$estimatedCost",
+              physicalProgress: "$progressPercentage",
+              financialProgress: "$financialProgress",
+            },
+          },
+        },
+      },
+      {
+        $addFields: {
+          contractorCount: { $size: "$uniqueContractors" },
         },
       },
       { $sort: { projectCount: -1 } },
@@ -548,6 +698,8 @@ export const getDistrictWiseProjectsSummary = async (req, res) => {
       ongoingProjects: district.ongoingProjects,
       totalUpdates:
         district.totalProgressUpdates + district.totalFinancialProgressUpdates,
+      contractorCount: district.contractorCount,
+      uniqueContractors: district.uniqueContractors,
 
       // Calculated metrics
       physicalCompletionRate:
@@ -582,6 +734,12 @@ export const getDistrictWiseProjectsSummary = async (req, res) => {
       progressGap: Math.abs(
         district.avgPhysicalProgress - district.avgFinancialProgress
       ),
+      avgProjectsPerContractor:
+        district.contractorCount > 0
+          ? Math.round(
+              (district.projectCount / district.contractorCount) * 100
+            ) / 100
+          : 0,
     }));
 
     res.status(200).json({
@@ -611,12 +769,22 @@ export const getDistrictWiseProjectsSummary = async (req, res) => {
             (sum, d) => sum + d.ongoingProjects,
             0
           ),
+          totalUniqueContractors: [
+            ...new Set(
+              formattedDistrictSummary.flatMap((d) => d.uniqueContractors)
+            ),
+          ].length,
+          totalContractorCount: formattedDistrictSummary.reduce(
+            (sum, d) => sum + d.contractorCount,
+            0
+          ),
         },
       },
       filters: {
         status: status || null,
         fund: fund || null,
         timeRange: timeRange || "all",
+        contractorName: contractorName || null,
       },
     });
   } catch (error) {
@@ -629,7 +797,218 @@ export const getDistrictWiseProjectsSummary = async (req, res) => {
   }
 };
 
+/**
+ * Get contractor-wise project summary
+ * GET /api/projects/summary/contractors
+ */
+export const getContractorWiseProjectsSummary = async (req, res) => {
+  try {
+    const { status, district, fund, timeRange } = req.query;
+    const filter = {};
+
+    if (status) filter.status = status;
+    if (district) filter.district = district;
+    if (fund) filter.fund = fund;
+
+    if (timeRange) {
+      const endDate = new Date();
+      const startDate = new Date();
+
+      switch (timeRange) {
+        case "last30days":
+          startDate.setDate(endDate.getDate() - 30);
+          break;
+        case "last3months":
+          startDate.setMonth(endDate.getMonth() - 3);
+          break;
+        case "last6months":
+          startDate.setMonth(endDate.getMonth() - 6);
+          break;
+        case "lastyear":
+          startDate.setFullYear(endDate.getFullYear() - 1);
+          break;
+        default:
+          break;
+      }
+
+      if (timeRange !== "all") {
+        filter.createdAt = { $gte: startDate, $lte: endDate };
+      }
+    }
+
+    const contractorSummary = await Project.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: {
+            contractorName: "$contractorName",
+            contractorPhone: "$contractorPhoneNumber",
+            contractorAddress: "$contractorAddress",
+          },
+          projectCount: { $sum: 1 },
+          totalEstimatedCost: { $sum: "$estimatedCost" },
+          totalBillSubmitted: { $sum: "$billSubmittedAmount" },
+          avgPhysicalProgress: { $avg: "$progressPercentage" },
+          avgFinancialProgress: { $avg: "$financialProgress" },
+          completedProjects: {
+            $sum: { $cond: [{ $eq: ["$progressPercentage", 100] }, 1, 0] },
+          },
+          financiallyCompletedProjects: {
+            $sum: { $cond: [{ $eq: ["$financialProgress", 100] }, 1, 0] },
+          },
+          fullyCompletedProjects: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$progressPercentage", 100] },
+                    { $eq: ["$financialProgress", 100] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          ongoingProjects: {
+            $sum: { $cond: [{ $eq: ["$status", "Ongoing"] }, 1, 0] },
+          },
+          districts: { $addToSet: "$district" },
+          workTypes: { $addToSet: "$typeOfWork" },
+          funds: { $addToSet: "$fund" },
+          totalProgressUpdates: { $sum: { $size: "$progressUpdates" } },
+          totalFinancialProgressUpdates: {
+            $sum: { $size: "$financialProgressUpdates" },
+          },
+        },
+      },
+      {
+        $addFields: {
+          districtCount: { $size: "$districts" },
+          workTypeCount: { $size: "$workTypes" },
+          fundCount: { $size: "$funds" },
+        },
+      },
+      { $sort: { projectCount: -1 } },
+    ]);
+
+    const formattedContractorSummary = contractorSummary.map((contractor) => ({
+      contractorName: contractor._id.contractorName,
+      contractorPhone: contractor._id.contractorPhone,
+      contractorAddress: contractor._id.contractorAddress,
+      projectCount: contractor.projectCount,
+      totalEstimatedCost: contractor.totalEstimatedCost,
+      totalBillSubmitted: contractor.totalBillSubmitted,
+      remainingBudget:
+        contractor.totalEstimatedCost - contractor.totalBillSubmitted,
+      avgPhysicalProgress:
+        Math.round(contractor.avgPhysicalProgress * 100) / 100,
+      avgFinancialProgress:
+        Math.round(contractor.avgFinancialProgress * 100) / 100,
+      completedProjects: contractor.completedProjects,
+      financiallyCompletedProjects: contractor.financiallyCompletedProjects,
+      fullyCompletedProjects: contractor.fullyCompletedProjects,
+      ongoingProjects: contractor.ongoingProjects,
+      districts: contractor.districts,
+      workTypes: contractor.workTypes,
+      funds: contractor.funds,
+      districtCount: contractor.districtCount,
+      workTypeCount: contractor.workTypeCount,
+      fundCount: contractor.fundCount,
+      totalUpdates:
+        contractor.totalProgressUpdates +
+        contractor.totalFinancialProgressUpdates,
+
+      // Calculated metrics
+      physicalCompletionRate:
+        contractor.projectCount > 0
+          ? Math.round(
+              (contractor.completedProjects / contractor.projectCount) * 100
+            )
+          : 0,
+      financialCompletionRate:
+        contractor.projectCount > 0
+          ? Math.round(
+              (contractor.financiallyCompletedProjects /
+                contractor.projectCount) *
+                100
+            )
+          : 0,
+      fullCompletionRate:
+        contractor.projectCount > 0
+          ? Math.round(
+              (contractor.fullyCompletedProjects / contractor.projectCount) *
+                100
+            )
+          : 0,
+      budgetUtilizationRate:
+        contractor.totalEstimatedCost > 0
+          ? Math.round(
+              (contractor.totalBillSubmitted / contractor.totalEstimatedCost) *
+                100
+            )
+          : 0,
+      avgProjectValue:
+        contractor.projectCount > 0
+          ? Math.round(contractor.totalEstimatedCost / contractor.projectCount)
+          : 0,
+      progressGap: Math.abs(
+        contractor.avgPhysicalProgress - contractor.avgFinancialProgress
+      ),
+      diversityScore:
+        contractor.districtCount +
+        contractor.workTypeCount +
+        contractor.fundCount,
+    }));
+
+    res.status(200).json({
+      success: true,
+      message: "Contractor-wise project summary retrieved successfully",
+      data: {
+        contractors: formattedContractorSummary,
+        totalContractors: formattedContractorSummary.length,
+        aggregatedTotals: {
+          totalProjects: formattedContractorSummary.reduce(
+            (sum, c) => sum + c.projectCount,
+            0
+          ),
+          totalEstimatedCost: formattedContractorSummary.reduce(
+            (sum, c) => sum + c.totalEstimatedCost,
+            0
+          ),
+          totalBillSubmitted: formattedContractorSummary.reduce(
+            (sum, c) => sum + c.totalBillSubmitted,
+            0
+          ),
+          totalCompletedProjects: formattedContractorSummary.reduce(
+            (sum, c) => sum + c.completedProjects,
+            0
+          ),
+          totalOngoingProjects: formattedContractorSummary.reduce(
+            (sum, c) => sum + c.ongoingProjects,
+            0
+          ),
+        },
+      },
+      filters: {
+        status: status || null,
+        district: district || null,
+        fund: fund || null,
+        timeRange: timeRange || "all",
+      },
+    });
+  } catch (error) {
+    console.error("Error retrieving contractor-wise project summary:", error);
+    res.status(500).json({
+      success: false,
+      message:
+        "Internal server error occurred while retrieving contractor-wise summary",
+    });
+  }
+};
+
 export default {
   getProjectsSummary,
   getDistrictWiseProjectsSummary,
+  getContractorWiseProjectsSummary,
 };

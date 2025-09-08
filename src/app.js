@@ -7,6 +7,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import * as dotenv from "dotenv";
 import express from "express";
+import rateLimit from "express-rate-limit";
 // import mongoSanitize from "express-mongo-sanitize";
 import helmet from "helmet";
 import morgan from "morgan";
@@ -38,6 +39,7 @@ const corsOptions = {
     "http://localhost:3000",
     "https://ipms-dev.vercel.app",
     process.env.FRONTEND_URL,
+    process.env.FRONTEND_URL1,
   ],
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
@@ -68,12 +70,12 @@ process.on("unhandledRejection", (err) => {
 
 // Security and request parsing
 app.use(cors(corsOptions));
-// app.use(
-//   rateLimit({
-//     windowMs: 15 * 60 * 1000,
-//     limit: 60,
-//   })
-// );
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 60,
+  })
+);
 app.use(helmet()); // Set security HTTP headers
 app.use(morgan("tiny")); // API logging for development
 

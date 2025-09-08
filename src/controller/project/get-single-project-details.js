@@ -24,7 +24,7 @@ export const getProjectById = async (req, res) => {
         success: false,
         message: "Project not found",
         details: {
-          searchedId: id,
+          searchedId: projectId,
           suggestion: "Please verify the project ID and try again",
         },
       });
@@ -37,7 +37,7 @@ export const getProjectById = async (req, res) => {
     const progressStatus = project.progressStatus;
     const financialProgressStatus = project.financialProgressStatus;
 
-    // Add calculated fields to response including financial progress
+    // Add calculated fields to response including financial progress and contractor info
     const enrichedProject = {
       ...projectData,
       remainingBudget: project.remainingBudget,
@@ -46,6 +46,8 @@ export const getProjectById = async (req, res) => {
       progressSummary: project.progressSummary,
       projectDurationDays: project.projectDurationDays,
       totalSubProjectsCost: project.totalSubProjectsCost,
+      contractorContact: project.contractorContact, // Virtual field for contractor info
+      fundDetails: project.fundDetails, // Virtual field for fund details
     };
 
     // Calculate additional project metrics
@@ -103,7 +105,7 @@ export const getProjectById = async (req, res) => {
           : 0,
     };
 
-    // Find related projects
+    // Find related projects - include contractor information
     const relatedProjectsPromises = [
       // Projects by same creator
       Project.find({
@@ -111,7 +113,7 @@ export const getProjectById = async (req, res) => {
         _id: { $ne: project._id },
       })
         .select(
-          "_id projectName progressPercentage financialProgress estimatedCost status billSubmittedAmount"
+          "_id projectName progressPercentage financialProgress estimatedCost status billSubmittedAmount contractorName contractorPhoneNumber"
         )
         .limit(5)
         .sort({ createdAt: -1 }),
@@ -122,7 +124,7 @@ export const getProjectById = async (req, res) => {
         _id: { $ne: project._id },
       })
         .select(
-          "_id projectName progressPercentage financialProgress estimatedCost status billSubmittedAmount"
+          "_id projectName progressPercentage financialProgress estimatedCost status billSubmittedAmount contractorName contractorPhoneNumber"
         )
         .limit(5)
         .sort({ createdAt: -1 }),
@@ -133,7 +135,7 @@ export const getProjectById = async (req, res) => {
         _id: { $ne: project._id },
       })
         .select(
-          "_id projectName progressPercentage financialProgress estimatedCost status billSubmittedAmount"
+          "_id projectName progressPercentage financialProgress estimatedCost status billSubmittedAmount contractorName contractorPhoneNumber"
         )
         .limit(5)
         .sort({ createdAt: -1 }),
@@ -144,7 +146,18 @@ export const getProjectById = async (req, res) => {
         _id: { $ne: project._id },
       })
         .select(
-          "_id projectName progressPercentage financialProgress estimatedCost status billSubmittedAmount"
+          "_id projectName progressPercentage financialProgress estimatedCost status billSubmittedAmount contractorName contractorPhoneNumber"
+        )
+        .limit(5)
+        .sort({ createdAt: -1 }),
+
+      // Projects with same contractor
+      Project.find({
+        contractorName: project.contractorName,
+        _id: { $ne: project._id },
+      })
+        .select(
+          "_id projectName progressPercentage financialProgress estimatedCost status billSubmittedAmount district typeOfWork"
         )
         .limit(5)
         .sort({ createdAt: -1 }),
@@ -155,6 +168,7 @@ export const getProjectById = async (req, res) => {
       projectsByDistrict,
       projectsByFund,
       projectsByType,
+      projectsByContractor,
     ] = await Promise.all(relatedProjectsPromises);
 
     // Enhance related projects with progress summaries
@@ -189,6 +203,7 @@ export const getProjectById = async (req, res) => {
           byDistrict: enhanceRelatedProjects(projectsByDistrict),
           byFund: enhanceRelatedProjects(projectsByFund),
           byType: enhanceRelatedProjects(projectsByType),
+          byContractor: enhanceRelatedProjects(projectsByContractor),
         },
       },
       metadata: {
@@ -200,6 +215,10 @@ export const getProjectById = async (req, res) => {
         lastFinancialProgressUpdate: project.lastFinancialProgressUpdate,
         hasSubProjects: project.hasSubProjects,
         subProjectsCount: project.subProjects ? project.subProjects.length : 0,
+        contractorInfo: {
+          name: project.contractorName,
+          phone: project.contractorPhoneNumber,
+        },
       },
     });
   } catch (error) {
@@ -210,7 +229,7 @@ export const getProjectById = async (req, res) => {
         success: false,
         message: "Invalid project ID format",
         details: {
-          providedId: req.params.id,
+          providedId: req.params.projectId,
           error: error.message,
           expectedFormat: "MongoDB ObjectId (24 character hex string)",
         },
@@ -262,6 +281,7 @@ export const getProjectTimeline = async (req, res) => {
         details: {
           creator: project.createdBy.name,
           role: project.createdBy.role,
+          contractor: project.contractorName,
         },
       });
     }
@@ -271,13 +291,16 @@ export const getProjectTimeline = async (req, res) => {
       timeline.push({
         date: project.dateOfIssueOfWorkOrder,
         event: "Work Order Issued",
-        description: `Work Order ${
-          project.workOrderNumber
-        } issued for ₹${project.estimatedCost.toLocaleString()}`,
+        description: `Work Order ${project.workOrderNumber} issued to ${
+          project.contractorName
+        } for ₹${project.estimatedCost.toLocaleString()}`,
         type: "order",
         details: {
           workOrderNumber: project.workOrderNumber,
           estimatedCost: project.estimatedCost,
+          contractorName: project.contractorName,
+          contractorPhone: project.contractorPhoneNumber,
+          contractorAddress: project.contractorAddress,
         },
       });
     }
@@ -287,11 +310,12 @@ export const getProjectTimeline = async (req, res) => {
       timeline.push({
         date: project.projectStartDate,
         event: "Project Started",
-        description: `Project implementation began`,
+        description: `Project implementation began with contractor ${project.contractorName}`,
         type: "milestone",
         details: {
           duration: project.projectDurationDays,
           endDate: project.projectEndDate,
+          contractor: project.contractorName,
         },
       });
     }
@@ -320,6 +344,7 @@ export const getProjectTimeline = async (req, res) => {
             details: {
               milestone,
               progressPercentage: milestone,
+              contractor: project.contractorName,
             },
           });
         }
@@ -352,6 +377,7 @@ export const getProjectTimeline = async (req, res) => {
               estimatedAmount: Math.round(
                 (milestone / 100) * project.estimatedCost
               ),
+              contractor: project.contractorName,
             },
           });
         }
@@ -363,11 +389,12 @@ export const getProjectTimeline = async (req, res) => {
       timeline.push({
         date: project.extensionPeriodForCompletion,
         event: "Extension Granted",
-        description: `Project deadline extended`,
+        description: `Project deadline extended for contractor ${project.contractorName}`,
         type: "extension",
         details: {
           originalEndDate: project.projectEndDate,
           extendedEndDate: project.extensionPeriodForCompletion,
+          contractor: project.contractorName,
         },
       });
     }
@@ -387,6 +414,7 @@ export const getProjectTimeline = async (req, res) => {
               newProgress: update.newProgress,
               updatedBy: update.updatedBy.userName,
               remarks: update.remarks,
+              contractor: project.contractorName,
             },
           });
         });
@@ -413,6 +441,7 @@ export const getProjectTimeline = async (req, res) => {
               updatedBy: update.updatedBy.userName,
               remarks: update.remarks,
               billDetails: update.billDetails,
+              contractor: project.contractorName,
             },
           });
         });
@@ -459,6 +488,7 @@ export const getProjectTimeline = async (req, res) => {
       data: {
         projectId: project._id,
         projectName: project.projectName,
+        contractorName: project.contractorName,
         timeline,
         duration,
         currentStatus: {

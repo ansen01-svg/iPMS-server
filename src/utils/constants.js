@@ -1,13 +1,5 @@
 // User constants
-export const userRoles = [
-  "JE",
-  "AEE",
-  "CE",
-  "MD",
-  "EXECUTOR",
-  "VIEWER",
-  "ADMIN",
-];
+export const userRoles = ["JE", "AEE", "CE", "MD", "VIEWER", "ADMIN"];
 
 // Project constants
 export const projectStatus = [
@@ -109,8 +101,7 @@ export const districts = [
 
 export const typeOfWork = [
   "Construction",
-  "Repair & Maintenance",
-  "Renovation",
+  "Repair & Renovation",
   "Consultancy",
   "Survey",
   "Monitoring & Evaluation",

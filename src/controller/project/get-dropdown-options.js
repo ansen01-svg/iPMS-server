@@ -1,7 +1,6 @@
 import {
   districts,
   funds,
-  natureOfWork,
   sanctionAndDepartment,
   typeOfWork,
 } from "../../utils/constants.js";
@@ -15,7 +14,6 @@ const getDropdownOptions = async (req, res) => {
         sanctionAndDepartment,
         districts,
         typeOfWork,
-        natureOfWork,
       },
     });
   } catch (error) {

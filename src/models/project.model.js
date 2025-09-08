@@ -2,11 +2,25 @@ import mongoose from "mongoose";
 import {
   districts,
   funds,
-  natureOfWork,
   projectStatus,
   sanctionAndDepartment,
   typeOfWork,
 } from "../utils/constants.js";
+
+// Helper function to get all sub funds
+const getAllSubFunds = () => {
+  return funds.flatMap((fund) => fund.subFunds.map((subFund) => subFund.name));
+};
+
+// Helper function to validate sub fund belongs to main fund
+const validateSubFundForMainFund = function (subFundName) {
+  if (!subFundName || !this.fund) return true; // Skip validation if either is empty
+
+  const mainFund = funds.find((fund) => fund.name === this.fund);
+  if (!mainFund) return false;
+
+  return mainFund.subFunds.some((subFund) => subFund.name === subFundName);
+};
 
 // Schema for individual progress updates (physical/work progress)
 const progressUpdateSchema = new mongoose.Schema(
@@ -297,6 +311,7 @@ const uploadedFilesSchema = new mongoose.Schema(
 
 const projectSchema = new mongoose.Schema(
   {
+    // Project details
     dateOfIssueOfWorkOrder: {
       type: Date,
       required: [true, "Date of issue of work order is required"],
@@ -324,6 +339,8 @@ const projectSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+
+    // Funds
     fund: {
       type: String,
       enum: {
@@ -333,7 +350,20 @@ const projectSchema = new mongoose.Schema(
       required: [true, "Fund is required"],
       index: true,
     },
-    sanctionAndDepartment: {
+    subFund: {
+      type: String,
+      enum: {
+        values: getAllSubFunds(),
+        message: "Invalid sub fund type",
+      },
+      required: [true, "Sub fund is required"],
+      validate: {
+        validator: validateSubFundForMainFund,
+        message: "Sub fund must belong to the selected main fund",
+      },
+      index: true,
+    },
+    sanctioningDepartment: {
       type: String,
       enum: {
         values: sanctionAndDepartment,
@@ -363,6 +393,38 @@ const projectSchema = new mongoose.Schema(
       unique: true,
       index: true,
     },
+
+    // Contractor details
+    contractorName: {
+      type: String,
+      required: [true, "Contractor name is required"],
+      trim: true,
+      minlength: [2, "Contractor name must be at least 2 characters"],
+      maxlength: [100, "Contractor name cannot exceed 100 characters"],
+      index: true,
+    },
+    contractorAddress: {
+      type: String,
+      required: [true, "Contractor address is required"],
+      trim: true,
+      minlength: [10, "Contractor address must be at least 10 characters"],
+      maxlength: [500, "Contractor address cannot exceed 500 characters"],
+    },
+    contractorPhoneNumber: {
+      type: String,
+      required: [true, "Contractor phone number is required"],
+      trim: true,
+      validate: {
+        validator: function (v) {
+          // Indian phone number validation (10 digits, can start with +91)
+          return /^(\+91[\s-]?)?[6-9]\d{9}$/.test(v.replace(/[\s-]/g, ""));
+        },
+        message:
+          "Please enter a valid Indian phone number (10 digits starting with 6-9)",
+      },
+      index: true,
+    },
+
     estimatedCost: {
       type: Number,
       required: [true, "Estimated cost is required"],
@@ -376,14 +438,6 @@ const projectSchema = new mongoose.Schema(
         message: "Invalid type of work",
       },
       required: [true, "Type of work is required"],
-    },
-    natureOfWork: {
-      type: String,
-      enum: {
-        values: natureOfWork,
-        message: "Invalid nature of work",
-      },
-      required: [true, "Nature of work is required"],
     },
     projectStartDate: {
       type: Date,
@@ -571,6 +625,9 @@ projectSchema.index({ "financialProgressUpdates.createdAt": -1 });
 projectSchema.index({ lastProgressUpdate: -1 });
 projectSchema.index({ lastFinancialProgressUpdate: -1 });
 projectSchema.index({ progressPercentage: 1, financialProgress: 1 });
+projectSchema.index({ fund: 1, subFund: 1 });
+projectSchema.index({ district: 1, fund: 1, subFund: 1 });
+projectSchema.index({ subFund: 1, status: 1 });
 
 // Text Index for searching
 projectSchema.index({
@@ -672,6 +729,29 @@ projectSchema.virtual("latestFinancialProgressUpdate").get(function () {
   return null;
 });
 
+// Virtual to get fund and sub fund info together:
+projectSchema.virtual("fundDetails").get(function () {
+  const mainFund = funds.find((fund) => fund.name === this.fund);
+  if (!mainFund) return null;
+
+  const subFund = mainFund.subFunds.find((sf) => sf.name === this.subFund);
+
+  return {
+    mainFund: {
+      name: mainFund.name,
+      code: mainFund.code,
+    },
+    subFund: subFund
+      ? {
+          name: subFund.name,
+          code: subFund.code,
+        }
+      : null,
+    fullName: subFund ? `${mainFund.name} - ${subFund.name}` : mainFund.name,
+    fullCode: subFund ? `${mainFund.code}-${subFund.code}` : mainFund.code,
+  };
+});
+
 // Pre-save middleware
 projectSchema.pre("save", function (next) {
   if (this.isModified() && !this.isNew) {
@@ -760,6 +840,21 @@ projectSchema.statics.getFinancialProgressUpdateStats = function (filter = {}) {
       },
     },
   ]);
+};
+
+// Static method to find projects by fund and sub fund:
+projectSchema.statics.findByFundAndSubFund = function (fundName, subFundName) {
+  const query = { fund: fundName };
+  if (subFundName) {
+    query.subFund = subFundName;
+  }
+  return this.find(query);
+};
+
+// Static method to get sub funds for a main fund:
+projectSchema.statics.getSubFundsForMainFund = function (mainFundName) {
+  const mainFund = funds.find((fund) => fund.name === mainFundName);
+  return mainFund ? mainFund.subFunds : [];
 };
 
 // Instance methods for progress tracking

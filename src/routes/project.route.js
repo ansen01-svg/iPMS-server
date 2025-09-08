@@ -60,7 +60,17 @@ const router = express.Router();
 // ==========================================
 
 router.get("/", requireLogin(), getAllProjects);
-router.post("/", requireJe(), createProject);
+router.post(
+  "/",
+  requireJe(),
+  ...createFileUploadMiddleware({
+    fieldName: "projectFiles",
+    maxCount: 15,
+    folder: "project-documents",
+    requireFiles: false,
+  }),
+  createProject
+);
 router.get("/dropdown-options", getProjectDropdownOptions);
 
 // Get single project by ID with enhanced details
