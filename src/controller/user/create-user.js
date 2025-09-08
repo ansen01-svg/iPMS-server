@@ -32,12 +32,48 @@ function generateSecurePassword(length = 8) {
 }
 
 // Generate unique userId
-async function generateUserId(designation, roleId) {
+async function generateUserId(designation) {
   const designationPart = designation.toUpperCase().replace(/\s+/g, "");
-  const rolePart = roleId.toUpperCase();
+  let attempts = 0;
+  const maxAttempts = 10;
 
-  const count = await User.countDocuments({ designation, roleId });
-  return `${designationPart}${rolePart}${String(count + 1).padStart(2, "0")}`;
+  while (attempts < maxAttempts) {
+    try {
+      // Get the highest existing number for this designation
+      const lastUser = await User.findOne(
+        {
+          designation,
+          userId: new RegExp(`^${designationPart}\\d+$`),
+        },
+        { userId: 1 }
+      ).sort({ userId: -1 });
+
+      let nextNumber = 1;
+      if (lastUser && lastUser.userId) {
+        const match = lastUser.userId.match(/(\d+)$/);
+        if (match) {
+          nextNumber = parseInt(match[1]) + 1;
+        }
+      }
+
+      const userId = `${designationPart}${String(nextNumber).padStart(2, "0")}`;
+
+      // Try to create with this ID - will fail if duplicate
+      const existingUser = await User.findOne({ userId });
+      if (!existingUser) {
+        return userId;
+      }
+
+      attempts++;
+    } catch (error) {
+      attempts++;
+      if (attempts >= maxAttempts) throw error;
+    }
+  }
+
+  throw new Error(
+    `Failed to generate unique userId after ${maxAttempts} attempts`
+  );
 }
 
 // Validation helper
@@ -95,7 +131,7 @@ const createUser = async (req, res) => {
     }
 
     // Generate unique userId and secure password
-    const userId = await generateUserId(designation, roleId);
+    const userId = await generateUserId(designation);
     const plainPassword = generateSecurePassword();
     const hashedPassword = await bcrypt.hash(plainPassword, 12);
 
