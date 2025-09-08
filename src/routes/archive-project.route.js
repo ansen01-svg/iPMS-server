@@ -20,6 +20,18 @@ import {
   updateProjectProgress,
 } from "../controller/archive-project.js/update-physical-progress.js";
 
+// NEW: Import query controllers
+import {
+  createQuery,
+  getProjectQueries,
+  getQueryById,
+  updateQuery,
+  deleteQuery,
+  escalateQuery,
+  getQueryStatistics,
+  searchQueries,
+} from "../controller/archive-project.js/query.js";
+
 // Authentication middleware
 import { requireJe, requireLogin } from "../middlewares/auth.middleware.js";
 import { createFileUploadMiddleware } from "../middlewares/firebaseUpload.middleware.js";
@@ -448,6 +460,34 @@ router.get("/:id/completion-status", requireLogin(), async (req, res) => {
     });
   }
 });
+
+// ==========================================
+// NEW: QUERY MANAGEMENT ROUTES
+// ==========================================
+
+// Create a new query for a specific project (JE only)
+router.post("/:id/queries", requireLogin(), createQuery);
+
+// Get all queries for a specific project with filtering and pagination
+router.get("/:id/queries", requireLogin(), getProjectQueries);
+
+// Get query statistics across all projects
+router.get("/queries/statistics", requireLogin(), getQueryStatistics);
+
+// Search queries across all projects
+router.get("/queries/search", requireLogin(), searchQueries);
+
+// Get a single query by queryId
+router.get("/queries/:queryId", requireLogin(), getQueryById);
+
+// Update a query (JE only)
+router.put("/queries/:queryId", requireLogin(), updateQuery);
+
+// Delete (soft delete) a query (JE only)
+router.delete("/queries/:queryId", requireLogin(), deleteQuery);
+
+// Escalate a query (JE only)
+router.put("/queries/:queryId/escalate", requireLogin(), escalateQuery);
 
 // ==========================================
 // BULK OPERATIONS (Optional Advanced Features)
