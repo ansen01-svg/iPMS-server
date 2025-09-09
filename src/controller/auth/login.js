@@ -1,8 +1,8 @@
 import bcrypt from "bcryptjs";
-import dotenv from "dotenv";
-import User from "../../models/user.model.js";
-import OTP from "../../models/otp.model.js"; // your OTP schema
 import crypto from "crypto";
+import dotenv from "dotenv";
+import OTP from "../../models/otp.model.js";
+import User from "../../models/user.model.js";
 
 dotenv.config();
 
