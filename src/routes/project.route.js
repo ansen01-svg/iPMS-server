@@ -59,7 +59,10 @@ const router = express.Router();
 // BASIC PROJECT ROUTES
 // ==========================================
 
+// Get all projects
 router.get("/", requireLogin(), getAllProjects);
+
+// Create a new project (JE only)
 router.post(
   "/",
   requireJe(),
@@ -71,6 +74,8 @@ router.post(
   }),
   createProject
 );
+
+// Get dropdown options for project creation
 router.get("/dropdown-options", getProjectDropdownOptions);
 
 // Get single project by ID with enhanced details
@@ -102,7 +107,7 @@ router.get(
   getProgressStatistics
 );
 
-// Update project physical progress with Firebase file uploads (JE only)
+// Update project physical progress (JE only)
 router.put(
   "/:id/progress",
   requireJe(),
@@ -139,7 +144,7 @@ router.get(
   getFinancialProgressStatistics
 );
 
-// Update financial progress with Firebase file uploads (JE only)
+// Update financial progress (JE only)
 router.put(
   "/:id/financial-progress",
   requireJe(),
