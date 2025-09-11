@@ -20,16 +20,15 @@ import {
   updateProjectProgress,
 } from "../controller/archive-project.js/update-physical-progress.js";
 
-// NEW: Import query controllers
 import {
   createQuery,
-  getProjectQueries,
-  getQueryById,
-  updateQuery,
   deleteQuery,
   escalateQuery,
+  getProjectQueries,
+  getQueryById,
   getQueryStatistics,
   searchQueries,
+  updateQuery,
 } from "../controller/archive-project.js/query.js";
 
 // Authentication middleware
@@ -46,7 +45,7 @@ import {
   validateProgressUpdate,
 } from "../middlewares/validate-archive-project-progress.middleware.js";
 
-// NEW: Financial progress validation middleware
+// Financial progress validation middleware
 import {
   financialProgressUpdateRateLimit,
   handleFinancialValidationErrors,
@@ -61,7 +60,7 @@ import {
   getPDFGenerationOptions,
 } from "../controller/archive-project.js/generate-pdf.js";
 
-// NEW: Import the model for utility routes
+// Import the model for utility routes
 import ArchiveProject from "../models/archive-project.model.js";
 
 const router = express.Router();
