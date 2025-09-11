@@ -3,6 +3,11 @@ import mongoose from "mongoose";
 
 // Controllers
 import createProject from "../controller/project/create-project.js";
+import {
+  generateBulkProjectSummaryPDF,
+  generateProjectSummaryPDFController,
+  getPDFGenerationOptions,
+} from "../controller/project/generate-pdf.js";
 import getAllProjects from "../controller/project/get-all-projects.js";
 import getProjectDropdownOptions from "../controller/project/get-dropdown-options.js";
 import {
@@ -364,6 +369,39 @@ router.patch("/:id/progress/toggle-all", requireLogin(), async (req, res) => {
     });
   }
 });
+
+// ==========================================
+// PDF GENERATION ROUTES
+// ==========================================
+
+// Get PDF generation options for a specific project
+router.get("/:id/pdf-options", requireLogin(), getPDFGenerationOptions);
+
+// Generate and download project summary PDF
+router.get(
+  "/:id/download-summary-pdf",
+  requireLogin(),
+  generateProjectSummaryPDFController
+);
+
+// Alternative POST route for PDF generation with custom options
+router.post(
+  "/:id/generate-summary-pdf",
+  requireLogin(),
+  async (req, res, next) => {
+    // Convert POST body parameters to query parameters for consistency
+    req.query = { ...req.query, ...req.body };
+    next();
+  },
+  generateProjectSummaryPDFController
+);
+
+// Bulk PDF generation for multiple projects (Admin/JE only)
+router.post(
+  "/bulk/generate-summary-pdf",
+  requireJe(), // Could be requireAdmin() in production
+  generateBulkProjectSummaryPDF
+);
 
 // ==========================================
 // PROJECT COMPLETION AND STATUS ROUTES
