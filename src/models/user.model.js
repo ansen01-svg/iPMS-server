@@ -43,6 +43,9 @@ const userSchema = new mongoose.Schema(
       required: [true, "Password is required"],
       minlength: [6, "Password must be at least 6 characters"],
     },
+    avatar: {
+      type: String,
+    },
     userId: {
       type: String,
       required: [true, "User ID is required"],
