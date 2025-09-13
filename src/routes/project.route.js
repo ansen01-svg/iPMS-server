@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 
 // Controllers
 import createProject from "../controller/project/create-project.js";
+import editProject from "../controller/project/edit-project.js";
 import {
   generateBulkProjectSummaryPDF,
   generateProjectSummaryPDFController,
@@ -93,6 +94,19 @@ router.post(
     requireFiles: false,
   }),
   createProject
+);
+
+// Update/Edit a project (JE only)
+router.put(
+  "/:id",
+  requireJe(),
+  ...createFileUploadMiddleware({
+    fieldName: "projectFiles",
+    maxCount: 15,
+    folder: "project-documents",
+    requireFiles: false,
+  }),
+  editProject
 );
 
 // Get dropdown options for project creation
