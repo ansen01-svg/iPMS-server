@@ -29,12 +29,27 @@ import {
   getProgressStatistics,
   updateProjectProgress,
 } from "../controller/project/update-physical-progress.js";
+import {
+  getAllowedStatusTransitions,
+  getProjectStatusHistory,
+  getProjectsByStatus,
+  getStatusSummary,
+  updateProjectStatus,
+} from "../controller/project/update-status.js";
 
 // Authentication middleware
 import { requireJe, requireLogin } from "../middlewares/auth.middleware.js";
 
 // File upload middleware
 import { createFileUploadMiddleware } from "../middlewares/firebaseUpload.middleware.js";
+
+// Status validation middleware
+import {
+  statusUpdateRateLimit,
+  validateStatusHistoryQuery,
+  validateStatusListQuery,
+  validateStatusUpdate,
+} from "../middlewares/validate-project-status.middleware.js";
 
 // Validation middleware for physical progress
 import {
@@ -97,6 +112,45 @@ router.get(
   "/summary/districts",
   requireLogin(),
   getDistrictWiseProjectsSummary
+);
+
+// ==========================================
+// PROJECT STATUS MANAGEMENT ROUTES
+// ==========================================
+
+// Get status summary/dashboard
+router.get("/status/summary", requireLogin(), getStatusSummary);
+
+// Get projects by status with filtering
+router.get(
+  "/status/list",
+  requireLogin(),
+  validateStatusListQuery,
+  getProjectsByStatus
+);
+
+// Get allowed status transitions for a specific project (for UI)
+router.get(
+  "/:id/status/transitions",
+  requireLogin(),
+  getAllowedStatusTransitions
+);
+
+// Update project status
+router.put(
+  "/:id/status",
+  requireLogin(), // All authenticated users can attempt (validation happens in controller)
+  statusUpdateRateLimit,
+  validateStatusUpdate,
+  updateProjectStatus
+);
+
+// Get project status history
+router.get(
+  "/:id/status/history",
+  requireLogin(),
+  validateStatusHistoryQuery,
+  getProjectStatusHistory
 );
 
 // ==========================================
