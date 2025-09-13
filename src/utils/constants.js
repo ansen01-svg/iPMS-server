@@ -3,18 +3,12 @@ export const userRoles = ["JE", "AEE", "CE", "MD", "VIEWER", "ADMIN"];
 
 // Project constants
 export const projectStatus = [
-  "Draft",
-  "Submitted to AEE",
+  "Submitted for Approval",
+  "Resubmitted for Approval",
   "Rejected by AEE",
-  "Submitted to CE",
   "Rejected by CE",
-  "Submitted to MD",
   "Rejected by MD",
-  "Submitted to Executing Department",
-  "Rejected by Executing Department",
-  "Approved",
   "Ongoing",
-  "Pending",
   "Completed",
 ];
 

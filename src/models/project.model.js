@@ -22,6 +22,72 @@ const validateSubFundForMainFund = function (subFundName) {
   return mainFund.subFunds.some((subFund) => subFund.name === subFundName);
 };
 
+// Schema for tracking status changes
+const statusHistorySchema = new mongoose.Schema(
+  {
+    previousStatus: {
+      type: String,
+      enum: [
+        "Submitted for Approval",
+        "Resubmitted for Approval",
+        "Rejected by AEE",
+        "Rejected by CE",
+        "Rejected by MD",
+        "Ongoing",
+        "Completed",
+      ],
+      required: true,
+    },
+    newStatus: {
+      type: String,
+      enum: [
+        "Submitted for Approval",
+        "Resubmitted for Approval",
+        "Rejected by AEE",
+        "Rejected by CE",
+        "Rejected by MD",
+        "Ongoing",
+        "Completed",
+      ],
+      required: true,
+    },
+    changedBy: {
+      userId: {
+        type: String,
+        required: true,
+      },
+      name: {
+        type: String,
+        required: true,
+      },
+      role: {
+        type: String,
+        required: true,
+        enum: ["JE", "AEE", "CE", "MD"],
+      },
+    },
+    remarks: {
+      type: String,
+      trim: true,
+      maxlength: [500, "Remarks cannot exceed 500 characters"],
+    },
+    rejectionReason: {
+      type: String,
+      trim: true,
+      maxlength: [1000, "Rejection reason cannot exceed 1000 characters"],
+      // Only required for rejection statuses
+      required: function () {
+        return this.newStatus.includes("Rejected");
+      },
+    },
+    ipAddress: String,
+    userAgent: String,
+  },
+  {
+    timestamps: true,
+  }
+);
+
 // Schema for individual progress updates (physical/work progress)
 const progressUpdateSchema = new mongoose.Schema(
   {
@@ -280,7 +346,7 @@ const uploadedFilesSchema = new mongoose.Schema(
     fileType: {
       type: String,
       required: [true, "File type is required"],
-      enum: ["pdf", "jpg", "jpeg", "png", "doc","docx", "xls", "xlsx"],
+      enum: ["pdf", "jpg", "jpeg", "png", "doc", "docx", "xls", "xlsx"],
       lowercase: true,
     },
     fileSize: {
@@ -591,8 +657,29 @@ const projectSchema = new mongoose.Schema(
         values: projectStatus,
         message: "Invalid project status",
       },
-      default: "Submitted to AEE",
+      default: "Submitted for Approval",
       index: true,
+    },
+    statusHistory: {
+      type: [statusHistorySchema],
+      default: [],
+    },
+    // Track status workflow
+    statusWorkflow: {
+      submittedAt: Date,
+      approvedAt: Date,
+      rejectedAt: Date,
+      completedAt: Date,
+      approvedBy: {
+        userId: String,
+        name: String,
+        role: String,
+      },
+      rejectedBy: {
+        userId: String,
+        name: String,
+        role: String,
+      },
     },
 
     // Additional tracking fields
@@ -628,6 +715,12 @@ projectSchema.index({ progressPercentage: 1, financialProgress: 1 });
 projectSchema.index({ fund: 1, subFund: 1 });
 projectSchema.index({ district: 1, fund: 1, subFund: 1 });
 projectSchema.index({ subFund: 1, status: 1 });
+
+projectSchema.index({ "statusHistory.newStatus": 1 });
+projectSchema.index({ "statusHistory.changedBy.userId": 1 });
+projectSchema.index({ "statusHistory.createdAt": -1 });
+projectSchema.index({ "statusWorkflow.approvedAt": -1 });
+projectSchema.index({ "statusWorkflow.rejectedAt": -1 });
 
 // Text Index for searching
 projectSchema.index({
@@ -856,6 +949,183 @@ projectSchema.statics.getSubFundsForMainFund = function (mainFundName) {
   const mainFund = funds.find((fund) => fund.name === mainFundName);
   return mainFund ? mainFund.subFunds : [];
 };
+
+// Method to change project status
+projectSchema.methods.changeStatus = function (
+  newStatus,
+  userInfo,
+  remarks = "",
+  rejectionReason = ""
+) {
+  const previousStatus = this.status;
+
+  // Validate status transition based on user role
+  const allowedTransitions = this.validateStatusTransition(
+    newStatus,
+    userInfo.role
+  );
+  if (!allowedTransitions.isValid) {
+    throw new Error(allowedTransitions.message);
+  }
+
+  // Create status history entry
+  const statusHistoryEntry = {
+    previousStatus,
+    newStatus,
+    changedBy: {
+      userId: userInfo.userId,
+      name: userInfo.name,
+      role: userInfo.role,
+    },
+    remarks,
+    rejectionReason: newStatus.includes("Rejected")
+      ? rejectionReason
+      : undefined,
+    ipAddress: userInfo.ipAddress,
+    userAgent: userInfo.userAgent,
+  };
+
+  // Update status and history
+  this.status = newStatus;
+  this.statusHistory.push(statusHistoryEntry);
+
+  // Update workflow timestamps
+  this.updateStatusWorkflow(newStatus, userInfo);
+
+  return this.save();
+};
+
+// Method to validate status transitions based on user role
+projectSchema.methods.validateStatusTransition = function (
+  newStatus,
+  userRole
+) {
+  const currentStatus = this.status;
+
+  // Define allowed transitions for each role
+  const allowedTransitions = {
+    JE: {
+      "Rejected by AEE": ["Resubmitted for Approval"],
+      "Rejected by CE": ["Resubmitted for Approval"],
+      "Rejected by MD": ["Resubmitted for Approval"],
+      Ongoing: ["Completed"],
+    },
+    AEE: {
+      "Submitted for Approval": ["Rejected by AEE", "Ongoing"],
+      "Resubmitted for Approval": ["Rejected by AEE", "Ongoing"],
+    },
+    CE: {
+      "Submitted for Approval": ["Rejected by CE", "Ongoing"],
+      "Resubmitted for Approval": ["Rejected by CE", "Ongoing"],
+    },
+    MD: {
+      "Submitted for Approval": ["Rejected by MD", "Ongoing"],
+      "Resubmitted for Approval": ["Rejected by MD", "Ongoing"],
+    },
+  };
+
+  const userAllowedTransitions = allowedTransitions[userRole];
+
+  if (!userAllowedTransitions || !userAllowedTransitions[currentStatus]) {
+    return {
+      isValid: false,
+      message: `${userRole} is not authorized to change status from '${currentStatus}'`,
+    };
+  }
+
+  if (!userAllowedTransitions[currentStatus].includes(newStatus)) {
+    return {
+      isValid: false,
+      message: `Invalid status transition from '${currentStatus}' to '${newStatus}' for ${userRole}`,
+    };
+  }
+
+  return { isValid: true };
+};
+
+// Method to update workflow timestamps
+projectSchema.methods.updateStatusWorkflow = function (newStatus, userInfo) {
+  const now = new Date();
+
+  switch (newStatus) {
+    case "Submitted for Approval":
+    case "Resubmitted for Approval":
+      this.statusWorkflow.submittedAt = now;
+      break;
+
+    case "Ongoing":
+      this.statusWorkflow.approvedAt = now;
+      this.statusWorkflow.approvedBy = {
+        userId: userInfo.userId,
+        name: userInfo.name,
+        role: userInfo.role,
+      };
+      break;
+
+    case "Rejected by AEE":
+    case "Rejected by CE":
+    case "Rejected by MD":
+      this.statusWorkflow.rejectedAt = now;
+      this.statusWorkflow.rejectedBy = {
+        userId: userInfo.userId,
+        name: userInfo.name,
+        role: userInfo.role,
+      };
+      break;
+
+    case "Completed":
+      this.statusWorkflow.completedAt = now;
+      break;
+  }
+};
+
+// Method to get status history with pagination
+projectSchema.methods.getStatusHistory = function (page = 1, limit = 10) {
+  const skip = (page - 1) * limit;
+  const history = this.statusHistory
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(skip, skip + limit);
+
+  return {
+    history,
+    totalEntries: this.statusHistory.length,
+    currentPage: page,
+    totalPages: Math.ceil(this.statusHistory.length / limit),
+    hasNextPage: page < Math.ceil(this.statusHistory.length / limit),
+    hasPrevPage: page > 1,
+  };
+};
+
+// Static method to get projects by status
+projectSchema.statics.findByStatus = function (status, page = 1, limit = 10) {
+  const skip = (page - 1) * limit;
+  return this.find({ status })
+    .sort({ updatedAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .populate("statusHistory.changedBy", "name role");
+};
+
+// Virtual for current status info
+projectSchema.virtual("currentStatusInfo").get(function () {
+  const latestHistory =
+    this.statusHistory && this.statusHistory.length > 0
+      ? this.statusHistory[this.statusHistory.length - 1]
+      : null;
+
+  return {
+    status: this.status,
+    lastChangedAt: latestHistory ? latestHistory.createdAt : this.createdAt,
+    lastChangedBy: latestHistory ? latestHistory.changedBy : this.createdBy,
+    remarks: latestHistory ? latestHistory.remarks : null,
+    isRejected: this.status.includes("Rejected"),
+    isApproved: this.status === "Ongoing",
+    isCompleted: this.status === "Completed",
+    isPending: ["Submitted for Approval", "Resubmitted for Approval"].includes(
+      this.status
+    ),
+  };
+});
 
 // Instance methods for progress tracking
 projectSchema.methods.calculateFinancialProgress = function () {
