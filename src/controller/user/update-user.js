@@ -4,6 +4,7 @@ import User from "../../models/user.model.js";
 export const getUserProfile = async (req, res) => {
   try {
     const userId = req.user?.userId || req.user?.id;
+    console.log(userId);
 
     if (!userId) {
       return res.status(401).json({
@@ -12,7 +13,7 @@ export const getUserProfile = async (req, res) => {
       });
     }
 
-    const user = await User.findById(userId).select("-password");
+    const user = await User.findOne({ userId }).select("-password");
 
     if (!user) {
       return res.status(404).json({
@@ -60,7 +61,9 @@ export const updateUserProfile = async (req, res) => {
     }
 
     // Find the current user
-    const currentUser = await User.findById(userId);
+    const currentUser = await User.findOne({ userId });
+    console.log("currentUser", currentUser);
+
     if (!currentUser) {
       return res.status(404).json({
         success: false,
@@ -135,11 +138,16 @@ export const updateUserProfile = async (req, res) => {
     }
 
     // Update user with validation
-    const updatedUser = await User.findByIdAndUpdate(userId, updateData, {
-      new: true,
-      runValidators: true,
-      select: "-password",
-    });
+
+    const updatedUser = await User.findOneAndUpdate(
+      { userId }, // Filter object - this is the key correction
+      updateData,
+      {
+        new: true,
+        runValidators: true,
+        select: "-password",
+      }
+    );
 
     if (!updatedUser) {
       return res.status(404).json({
@@ -197,6 +205,7 @@ export const updateUserProfile = async (req, res) => {
 export const getUserByUserId = async (req, res) => {
   try {
     const { userId } = req.params;
+    console.log(userId);
 
     if (!userId) {
       return res.status(400).json({
