@@ -4,12 +4,8 @@ import { userRoles } from "../utils/constants.js";
 
 const userSchema = new mongoose.Schema(
   {
-    fullName: {
-      type: String,
-    },
-    username: {
-      type: String,
-    },
+    fullName: { type: String },
+    username: { type: String },
     email: {
       type: String,
       required: [true, "Email is required"],
@@ -26,16 +22,9 @@ const userSchema = new mongoose.Schema(
       trim: true,
       match: [/^[\+]?[1-9][\d]{0,15}$/, "Please enter a valid phone number"],
     },
-    roleId: {
-      type: String,
-    },
-    departmentName: {
-      type: String,
-    },
-    departmentId: {
-      type: String,
-      trim: true,
-    },
+    roleId: { type: String },
+    departmentName: { type: String },
+    departmentId: { type: String, trim: true },
     designation: {
       type: String,
       enum: {
@@ -60,14 +49,12 @@ const userSchema = new mongoose.Schema(
       unique: true,
       trim: true,
     },
-    isFirstLogin: {
-      type: Boolean,
-      default: true,
-    },
-    lastPasswordChange: {
-      type: Date,
-      default: Date.now,
-    },
+    isFirstLogin: { type: Boolean, default: true },
+    lastPasswordChange: { type: Date, default: Date.now },
+
+    // Reset password support
+    resetPasswordToken: { type: String },
+    resetPasswordExpire: { type: Date },
   },
   {
     timestamps: true,
@@ -83,12 +70,11 @@ const userSchema = new mongoose.Schema(
 // Index for better query performance
 userSchema.index({ designation: 1, roleId: 1 });
 
-// Instance method to change password
+// Instance method to change password manually
 userSchema.methods.changePassword = async function (
   currentPassword,
   newPassword
 ) {
-  // Verify current password
   const isCurrentPasswordValid = await bcrypt.compare(
     currentPassword,
     this.password
@@ -97,14 +83,12 @@ userSchema.methods.changePassword = async function (
     throw new Error("Current password is incorrect");
   }
 
-  // Validate new password
   if (!validatePassword(newPassword)) {
     throw new Error(
       "New password must be at least 6 characters long and contain at least one special character"
     );
   }
 
-  // Hash and save new password
   this.password = await bcrypt.hash(newPassword, 12);
   this.lastPasswordChange = new Date();
   this.isFirstLogin = false;
