@@ -88,6 +88,142 @@ const statusHistorySchema = new mongoose.Schema(
   }
 );
 
+// Schema for raise query
+const raisedQuerySchema = new mongoose.Schema(
+  {
+    queryId: {
+      type: String,
+      required: [true, "Query ID is required"],
+      unique: true,
+      index: true,
+    },
+    projectId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: [true, "Project ID is required"],
+      index: true,
+      ref: "Project", // Reference to Project model
+    },
+    queryTitle: {
+      type: String,
+      required: [true, "Query title is required"],
+      minlength: [5, "Query title must be at least 5 characters"],
+      maxlength: [200, "Query title cannot exceed 200 characters"],
+      trim: true,
+      index: true,
+    },
+    queryDescription: {
+      type: String,
+      required: [true, "Query description is required"],
+      minlength: [20, "Query description must be at least 20 characters"],
+      maxlength: [2000, "Query description cannot exceed 2000 characters"],
+      trim: true,
+    },
+    queryCategory: {
+      type: String,
+      required: [true, "Query category is required"],
+      enum: {
+        values: [
+          "Technical",
+          "Financial",
+          "Administrative",
+          "Legal",
+          "Compliance",
+          "Design",
+          "Material",
+          "Safety",
+          "Environmental",
+          "Other",
+        ],
+        message: "Invalid query category",
+      },
+      index: true,
+    },
+    priority: {
+      type: String,
+      required: [true, "Priority is required"],
+      enum: {
+        values: ["Low", "Medium", "High", "Urgent"],
+        message: "Priority must be Low, Medium, High, or Urgent",
+      },
+      default: "Medium",
+      index: true,
+    },
+    status: {
+      type: String,
+      enum: {
+        values: [
+          "Open",
+          "In Progress",
+          "Under Review",
+          "Resolved",
+          "Closed",
+          "Escalated",
+        ],
+        message: "Invalid status",
+      },
+      default: "Open",
+      index: true,
+    },
+    raisedBy: {
+      type: String,
+      required: [true, "Raised by field is required"],
+      trim: true,
+      index: true,
+    },
+    assignedTo: {
+      type: String,
+      trim: true,
+      index: true,
+    },
+    raisedDate: {
+      type: Date,
+      required: [true, "Raised date is required"],
+      default: Date.now,
+      index: true,
+    },
+    expectedResolutionDate: {
+      type: Date,
+      required: [true, "Expected resolution date is required"],
+    },
+    actualResolutionDate: {
+      type: Date,
+    },
+    queryResponse: {
+      type: String,
+      maxlength: [2000, "Query response cannot exceed 2000 characters"],
+      trim: true,
+    },
+    internalRemarks: {
+      type: String,
+      maxlength: [1000, "Internal remarks cannot exceed 1000 characters"],
+      trim: true,
+    },
+    escalationLevel: {
+      type: Number,
+      min: [0, "Escalation level cannot be negative"],
+      max: [5, "Escalation level cannot exceed 5"],
+      default: 0,
+    },
+    relatedQueries: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "RaisedQuery",
+      },
+    ],
+    attachmentReferences: [String], // Store file names/paths if needed later
+    isActive: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+  },
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  }
+);
+
 // Schema for individual progress updates (physical/work progress)
 const progressUpdateSchema = new mongoose.Schema(
   {
@@ -692,6 +828,9 @@ const projectSchema = new mongoose.Schema(
         default: Date.now,
       },
     },
+
+    // Queries related to the project
+    queries: [raisedQuerySchema],
   },
   {
     timestamps: true,
@@ -727,6 +866,24 @@ projectSchema.index({
   projectName: "text",
   description: "text",
   beneficiary: "text",
+});
+
+// Compound Indexes for common query patterns
+raisedQuerySchema.index({ projectId: 1, status: 1 }); // Project queries by status
+raisedQuerySchema.index({ raisedBy: 1, status: 1 }); // User's queries by status
+raisedQuerySchema.index({ assignedTo: 1, priority: 1 }); // Assigned queries by priority
+raisedQuerySchema.index({ queryCategory: 1, status: 1 }); // Category-wise queries
+raisedQuerySchema.index({ raisedDate: -1, priority: 1 }); // Recent queries by priority
+raisedQuerySchema.index({ expectedResolutionDate: 1, status: 1 }); // Due queries
+raisedQuerySchema.index({ projectId: 1, raisedDate: -1 }); // Project queries timeline
+raisedQuerySchema.index({ status: 1, escalationLevel: -1 }); // Escalated queries
+
+// Text Index for searching across text fields
+raisedQuerySchema.index({
+  queryTitle: "text",
+  queryDescription: "text",
+  queryResponse: "text",
+  internalRemarks: "text",
 });
 
 // Virtual for project duration in days
@@ -843,6 +1000,126 @@ projectSchema.virtual("fundDetails").get(function () {
     fullName: subFund ? `${mainFund.name} - ${subFund.name}` : mainFund.name,
     fullCode: subFund ? `${mainFund.code}-${subFund.code}` : mainFund.code,
   };
+});
+
+// Virtual for calculating days since raised
+raisedQuerySchema.virtual("daysSinceRaised").get(function () {
+  if (!this.raisedDate) return 0;
+  const now = new Date();
+  const diffTime = Math.abs(now - this.raisedDate);
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+});
+
+// Virtual for calculating days until due
+raisedQuerySchema.virtual("daysUntilDue").get(function () {
+  if (!this.expectedResolutionDate) return null;
+  const now = new Date();
+  const diffTime = this.expectedResolutionDate - now;
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+});
+
+// Virtual for checking if query is overdue
+raisedQuerySchema.virtual("isOverdue").get(function () {
+  if (
+    !this.expectedResolutionDate ||
+    this.status === "Resolved" ||
+    this.status === "Closed"
+  ) {
+    return false;
+  }
+  return new Date() > this.expectedResolutionDate;
+});
+
+// Virtual for resolution time (in days)
+raisedQuerySchema.virtual("resolutionTimeInDays").get(function () {
+  if (!this.actualResolutionDate || !this.raisedDate) return null;
+  const diffTime = Math.abs(this.actualResolutionDate - this.raisedDate);
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+});
+
+projectSchema.virtual("totalQueries").get(function () {
+  return this.queries ? this.queries.filter((q) => q.isActive).length : 0;
+});
+
+// Virtual for open queries
+projectSchema.virtual("openQueries").get(function () {
+  return this.queries
+    ? this.queries.filter((q) => q.isActive && q.status === "Open").length
+    : 0;
+});
+
+// Virtual for overdue queries
+projectSchema.virtual("overdueQueries").get(function () {
+  if (!this.queries) return 0;
+  const now = new Date();
+  return this.queries.filter(
+    (q) =>
+      q.isActive &&
+      q.expectedResolutionDate < now &&
+      !["Resolved", "Closed"].includes(q.status)
+  ).length;
+});
+
+// Virtual for latest query
+projectSchema.virtual("latestQuery").get(function () {
+  if (!this.queries || this.queries.length === 0) return null;
+  const activeQueries = this.queries.filter((q) => q.isActive);
+  if (activeQueries.length === 0) return null;
+  return activeQueries.sort((a, b) => b.raisedDate - a.raisedDate)[0];
+});
+
+// Instance method to add a query
+projectSchema.methods.addQuery = function (queryData, userInfo) {
+  // Generate unique queryId
+  const year = new Date().getFullYear();
+  const queryCount = this.queries ? this.queries.length : 0;
+  const queryId = `QRY-${year}-${String(queryCount + 1).padStart(4, "0")}`;
+
+  const newQuery = {
+    queryId,
+    projectId: this._id,
+    queryTitle: queryData.queryTitle.trim(),
+    queryDescription: queryData.queryDescription.trim(),
+    queryCategory: queryData.queryCategory,
+    priority: queryData.priority || "Medium",
+    status: "Open",
+    raisedBy: userInfo.name || userInfo.username,
+    assignedTo: queryData.assignedTo?.trim() || "",
+    raisedDate: new Date(),
+    expectedResolutionDate: new Date(queryData.expectedResolutionDate),
+    escalationLevel: 0,
+    isActive: true,
+  };
+
+  this.queries.push(newQuery);
+  return this.save();
+};
+
+// Pre-save middleware for validation and auto-updates
+raisedQuerySchema.pre("save", function (next) {
+  // Auto-set actualResolutionDate when status changes to Resolved or Closed
+  if (
+    (this.status === "Resolved" || this.status === "Closed") &&
+    !this.actualResolutionDate
+  ) {
+    this.actualResolutionDate = new Date();
+  }
+
+  // Ensure expected resolution date is not in the past (only for new queries)
+  if (this.isNew && this.expectedResolutionDate < new Date()) {
+    next(new Error("Expected resolution date cannot be in the past"));
+  }
+
+  // Auto-escalate if query is overdue and still open
+  if (
+    this.expectedResolutionDate < new Date() &&
+    ["Open", "In Progress"].includes(this.status) &&
+    this.escalationLevel < 3
+  ) {
+    this.escalationLevel += 1;
+  }
+
+  next();
 });
 
 // Pre-save middleware
