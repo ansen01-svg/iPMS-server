@@ -20,6 +20,16 @@ import {
   getProjectsSummary,
 } from "../controller/project/get-summary.js";
 import {
+  createQuery,
+  deleteQuery,
+  escalateQuery,
+  getProjectQueries,
+  getQueryById,
+  getQueryStatistics,
+  searchQueries,
+  updateQuery,
+} from "../controller/project/query.js";
+import {
   getFinancialProgressHistory,
   getFinancialProgressStatistics,
   updateCombinedProgress,
@@ -437,6 +447,34 @@ router.patch("/:id/progress/toggle-all", requireLogin(), async (req, res) => {
     });
   }
 });
+
+// ==========================================
+// NEW: QUERY MANAGEMENT ROUTES
+// ==========================================
+
+// Create a new query for a specific project (JE only)
+router.post("/:id/queries", requireLogin(), createQuery);
+
+// Get all queries for a specific project with filtering and pagination
+router.get("/:id/queries", requireLogin(), getProjectQueries);
+
+// Get query statistics across all projects
+router.get("/queries/statistics", requireLogin(), getQueryStatistics);
+
+// Search queries across all projects
+router.get("/queries/search", requireLogin(), searchQueries);
+
+// Get a single query by queryId
+router.get("/queries/:queryId", requireLogin(), getQueryById);
+
+// Update a query (JE only)
+router.put("/queries/:queryId", requireLogin(), updateQuery);
+
+// Delete (soft delete) a query (JE only)
+router.delete("/queries/:queryId", requireLogin(), deleteQuery);
+
+// Escalate a query (JE only)
+router.put("/queries/:queryId/escalate", requireLogin(), escalateQuery);
 
 // ==========================================
 // PDF GENERATION ROUTES
@@ -988,5 +1026,539 @@ function getProgressStatus(progress) {
   if (progress < 100) return "Near Completion";
   return "Completed";
 }
+
+// ==========================================
+// QUERY-RELATED UTILITY ROUTES
+// ==========================================
+
+// Get project queries summary/dashboard
+router.get("/:id/queries/summary", requireLogin(), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid project ID format",
+      });
+    }
+
+    const project = await Project.findById(id);
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        message: "Project not found",
+      });
+    }
+
+    const activeQueries = project.queries.filter((q) => q.isActive);
+    const now = new Date();
+
+    // Calculate query statistics
+    const querySummary = {
+      total: activeQueries.length,
+      byStatus: {
+        open: activeQueries.filter((q) => q.status === "Open").length,
+        inProgress: activeQueries.filter((q) => q.status === "In Progress")
+          .length,
+        underReview: activeQueries.filter((q) => q.status === "Under Review")
+          .length,
+        resolved: activeQueries.filter((q) => q.status === "Resolved").length,
+        closed: activeQueries.filter((q) => q.status === "Closed").length,
+        escalated: activeQueries.filter((q) => q.status === "Escalated").length,
+      },
+      byPriority: {
+        low: activeQueries.filter((q) => q.priority === "Low").length,
+        medium: activeQueries.filter((q) => q.priority === "Medium").length,
+        high: activeQueries.filter((q) => q.priority === "High").length,
+        urgent: activeQueries.filter((q) => q.priority === "Urgent").length,
+      },
+      byCategory: activeQueries.reduce((acc, query) => {
+        acc[query.queryCategory.toLowerCase()] =
+          (acc[query.queryCategory.toLowerCase()] || 0) + 1;
+        return acc;
+      }, {}),
+      overdue: activeQueries.filter(
+        (q) =>
+          q.expectedResolutionDate < now &&
+          !["Resolved", "Closed"].includes(q.status)
+      ).length,
+      dueThisWeek: activeQueries.filter((q) => {
+        const weekFromNow = new Date();
+        weekFromNow.setDate(now.getDate() + 7);
+        return (
+          q.expectedResolutionDate >= now &&
+          q.expectedResolutionDate <= weekFromNow &&
+          !["Resolved", "Closed"].includes(q.status)
+        );
+      }).length,
+      escalated: activeQueries.filter((q) => q.escalationLevel > 0).length,
+      avgEscalationLevel:
+        activeQueries.length > 0
+          ? activeQueries.reduce((sum, q) => sum + q.escalationLevel, 0) /
+            activeQueries.length
+          : 0,
+    };
+
+    // Get recent queries (last 5)
+    const recentQueries = activeQueries
+      .sort((a, b) => new Date(b.raisedDate) - new Date(a.raisedDate))
+      .slice(0, 5)
+      .map((query) => ({
+        queryId: query.queryId,
+        queryTitle: query.queryTitle,
+        status: query.status,
+        priority: query.priority,
+        raisedDate: query.raisedDate,
+        daysSinceRaised: Math.ceil(
+          (now - query.raisedDate) / (1000 * 60 * 60 * 24)
+        ),
+        isOverdue:
+          query.expectedResolutionDate < now &&
+          !["Resolved", "Closed"].includes(query.status),
+      }));
+
+    // Get critical queries (urgent + overdue + high escalation)
+    const criticalQueries = activeQueries
+      .filter(
+        (q) =>
+          q.priority === "Urgent" ||
+          (q.expectedResolutionDate < now &&
+            !["Resolved", "Closed"].includes(q.status)) ||
+          q.escalationLevel >= 3
+      )
+      .sort((a, b) => {
+        // Sort by priority: Urgent > Overdue > High Escalation
+        if (a.priority === "Urgent" && b.priority !== "Urgent") return -1;
+        if (b.priority === "Urgent" && a.priority !== "Urgent") return 1;
+
+        const aOverdue =
+          a.expectedResolutionDate < now &&
+          !["Resolved", "Closed"].includes(a.status);
+        const bOverdue =
+          b.expectedResolutionDate < now &&
+          !["Resolved", "Closed"].includes(b.status);
+        if (aOverdue && !bOverdue) return -1;
+        if (bOverdue && !aOverdue) return 1;
+
+        return b.escalationLevel - a.escalationLevel;
+      })
+      .slice(0, 10)
+      .map((query) => ({
+        queryId: query.queryId,
+        queryTitle: query.queryTitle,
+        status: query.status,
+        priority: query.priority,
+        escalationLevel: query.escalationLevel,
+        expectedResolutionDate: query.expectedResolutionDate,
+        daysOverdue:
+          query.expectedResolutionDate < now
+            ? Math.ceil(
+                (now - query.expectedResolutionDate) / (1000 * 60 * 60 * 24)
+              )
+            : null,
+        urgencyReason:
+          query.priority === "Urgent"
+            ? "High Priority"
+            : query.expectedResolutionDate < now
+            ? "Overdue"
+            : "High Escalation",
+      }));
+
+    res.status(200).json({
+      success: true,
+      message: "Project queries summary retrieved successfully",
+      data: {
+        projectInfo: {
+          projectId: project.projectId,
+          projectName: project.projectName,
+          status: project.status,
+          district: project.district,
+        },
+        summary: querySummary,
+        recentQueries,
+        criticalQueries,
+        insights: {
+          resolutionRate:
+            querySummary.total > 0
+              ? Math.round(
+                  ((querySummary.byStatus.resolved +
+                    querySummary.byStatus.closed) /
+                    querySummary.total) *
+                    100
+                )
+              : 0,
+          avgDaysToResolve: activeQueries
+            .filter((q) => q.actualResolutionDate && q.raisedDate)
+            .reduce((sum, q, _, arr) => {
+              const days = Math.ceil(
+                (q.actualResolutionDate - q.raisedDate) / (1000 * 60 * 60 * 24)
+              );
+              return sum + days / arr.length;
+            }, 0),
+          mostCommonCategory:
+            Object.entries(querySummary.byCategory).sort(
+              ([, a], [, b]) => b - a
+            )[0]?.[0] || "N/A",
+          needsAttention: querySummary.overdue + querySummary.escalated > 0,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error getting project queries summary:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+// Get queries that need attention (overdue, urgent, escalated)
+router.get("/queries/needs-attention", requireLogin(), async (req, res) => {
+  try {
+    const { district, fund, assignedTo, page = 1, limit = 20 } = req.query;
+
+    // Build filter
+    const projectFilter = {};
+    if (district) projectFilter.district = district;
+    if (fund) projectFilter.fund = fund;
+
+    const now = new Date();
+
+    // Find projects with queries that need attention
+    const results = await Project.aggregate([
+      { $match: projectFilter },
+      { $unwind: "$queries" },
+      {
+        $match: {
+          "queries.isActive": true,
+          $or: [
+            // Urgent priority
+            { "queries.priority": "Urgent" },
+            // Overdue queries
+            {
+              $and: [
+                { "queries.expectedResolutionDate": { $lt: now } },
+                { "queries.status": { $nin: ["Resolved", "Closed"] } },
+              ],
+            },
+            // Escalated queries
+            { "queries.escalationLevel": { $gte: 1 } },
+            // High priority that's been open for more than 7 days
+            {
+              $and: [
+                { "queries.priority": "High" },
+                { "queries.status": { $in: ["Open", "In Progress"] } },
+                {
+                  "queries.raisedDate": {
+                    $lt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+      ...(assignedTo
+        ? [
+            {
+              $match: {
+                "queries.assignedTo": { $regex: assignedTo, $options: "i" },
+              },
+            },
+          ]
+        : []),
+      {
+        $project: {
+          query: "$queries",
+          projectInfo: {
+            projectId: "$projectId",
+            projectName: "$projectName",
+            district: "$district",
+            fund: "$fund",
+            status: "$status",
+          },
+        },
+      },
+      {
+        $addFields: {
+          "query.urgencyScore": {
+            $add: [
+              { $cond: [{ $eq: ["$query.priority", "Urgent"] }, 100, 0] },
+              { $cond: [{ $eq: ["$query.priority", "High"] }, 50, 0] },
+              { $cond: [{ $eq: ["$query.priority", "Medium"] }, 25, 0] },
+              { $multiply: ["$query.escalationLevel", 20] },
+              {
+                $cond: [
+                  { $lt: ["$query.expectedResolutionDate", now] },
+                  {
+                    $multiply: [
+                      {
+                        $divide: [
+                          { $subtract: [now, "$query.expectedResolutionDate"] },
+                          86400000,
+                        ],
+                      }, // days overdue
+                      10,
+                    ],
+                  },
+                  0,
+                ],
+              },
+            ],
+          },
+          "query.daysOverdue": {
+            $cond: [
+              { $lt: ["$query.expectedResolutionDate", now] },
+              {
+                $divide: [
+                  { $subtract: [now, "$query.expectedResolutionDate"] },
+                  86400000,
+                ],
+              },
+              0,
+            ],
+          },
+          "query.daysSinceRaised": {
+            $divide: [{ $subtract: [now, "$query.raisedDate"] }, 86400000],
+          },
+        },
+      },
+      { $sort: { "query.urgencyScore": -1, "query.raisedDate": 1 } },
+      { $skip: (parseInt(page) - 1) * parseInt(limit) },
+      { $limit: parseInt(limit) },
+    ]);
+
+    // Get total count
+    const totalResults = await Project.aggregate([
+      { $match: projectFilter },
+      { $unwind: "$queries" },
+      {
+        $match: {
+          "queries.isActive": true,
+          $or: [
+            { "queries.priority": "Urgent" },
+            {
+              $and: [
+                { "queries.expectedResolutionDate": { $lt: now } },
+                { "queries.status": { $nin: ["Resolved", "Closed"] } },
+              ],
+            },
+            { "queries.escalationLevel": { $gte: 1 } },
+            {
+              $and: [
+                { "queries.priority": "High" },
+                { "queries.status": { $in: ["Open", "In Progress"] } },
+                {
+                  "queries.raisedDate": {
+                    $lt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+      ...(assignedTo
+        ? [
+            {
+              $match: {
+                "queries.assignedTo": { $regex: assignedTo, $options: "i" },
+              },
+            },
+          ]
+        : []),
+      { $count: "total" },
+    ]);
+
+    const total = totalResults[0]?.total || 0;
+
+    // Format results with attention reasons
+    const formattedResults = results.map((item) => {
+      const query = item.query;
+      const reasons = [];
+
+      if (query.priority === "Urgent") reasons.push("Urgent Priority");
+      if (query.daysOverdue > 0)
+        reasons.push(`${Math.ceil(query.daysOverdue)} days overdue`);
+      if (query.escalationLevel >= 1)
+        reasons.push(`Escalated (Level ${query.escalationLevel})`);
+      if (query.priority === "High" && query.daysSinceRaised > 7)
+        reasons.push("High priority - Aging");
+
+      return {
+        ...query,
+        projectInfo: item.projectInfo,
+        attentionReasons: reasons,
+        daysOverdue: Math.ceil(query.daysOverdue),
+        daysSinceRaised: Math.ceil(query.daysSinceRaised),
+        urgencyScore: Math.round(query.urgencyScore),
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Found ${total} queries that need attention`,
+      data: {
+        queries: formattedResults,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / parseInt(limit)),
+          totalItems: total,
+          itemsPerPage: parseInt(limit),
+        },
+        summary: {
+          totalNeedingAttention: total,
+          urgent: formattedResults.filter((q) => q.priority === "Urgent")
+            .length,
+          overdue: formattedResults.filter((q) => q.daysOverdue > 0).length,
+          escalated: formattedResults.filter((q) => q.escalationLevel > 0)
+            .length,
+        },
+        filters: { district, fund, assignedTo },
+      },
+    });
+  } catch (error) {
+    console.error("Error getting queries needing attention:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+// Bulk update queries (Admin/JE only)
+router.post("/queries/bulk-update", requireLogin(), async (req, res) => {
+  try {
+    const { updates } = req.body; // Array of {queryId, status, assignedTo, priority, remarks}
+    const user = req.user;
+
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Updates array is required and cannot be empty",
+      });
+    }
+
+    if (updates.length > 20) {
+      return res.status(400).json({
+        success: false,
+        message: "Maximum 20 queries can be updated in one bulk operation",
+      });
+    }
+
+    const results = [];
+    const errors = [];
+
+    for (const update of updates) {
+      try {
+        const { queryId, status, assignedTo, priority, remarks } = update;
+
+        // Find project containing the query
+        const project = await Project.findOne({
+          "queries.queryId": queryId,
+          "queries.isActive": true,
+        });
+
+        if (!project) {
+          errors.push({
+            queryId,
+            error: "Query not found",
+          });
+          continue;
+        }
+
+        const query = project.queries.find(
+          (q) => q.queryId === queryId && q.isActive
+        );
+
+        let updated = false;
+        const changes = {};
+
+        // Update fields if provided
+        if (status && status !== query.status) {
+          const previousStatus = query.status;
+          query.status = status;
+          changes.status = { from: previousStatus, to: status };
+
+          // Auto-set resolution date for resolved/closed queries
+          if (
+            ["Resolved", "Closed"].includes(status) &&
+            !query.actualResolutionDate
+          ) {
+            query.actualResolutionDate = new Date();
+          }
+          updated = true;
+        }
+
+        if (assignedTo && assignedTo !== query.assignedTo) {
+          const previousAssignedTo = query.assignedTo;
+          query.assignedTo = assignedTo;
+          changes.assignedTo = { from: previousAssignedTo, to: assignedTo };
+          updated = true;
+        }
+
+        if (priority && priority !== query.priority) {
+          const previousPriority = query.priority;
+          query.priority = priority;
+          changes.priority = { from: previousPriority, to: priority };
+          updated = true;
+        }
+
+        // Add bulk update remark
+        if (remarks || updated) {
+          const timestamp = new Date().toISOString();
+          const bulkUpdateRemark = `[BULK UPDATE - ${timestamp}] ${
+            remarks || "Bulk status update"
+          }`;
+          query.internalRemarks = query.internalRemarks
+            ? `${query.internalRemarks}\n${bulkUpdateRemark}`
+            : bulkUpdateRemark;
+          updated = true;
+        }
+
+        if (updated) {
+          await project.save();
+          results.push({
+            queryId,
+            status: "updated",
+            changes,
+          });
+        } else {
+          results.push({
+            queryId,
+            status: "no_changes",
+          });
+        }
+      } catch (error) {
+        console.error(`Error updating query ${update.queryId}:`, error);
+        errors.push({
+          queryId: update.queryId,
+          error: error.message,
+        });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Bulk update completed. ${results.length} processed, ${errors.length} errors`,
+      data: {
+        successful: results,
+        failed: errors,
+        summary: {
+          total: updates.length,
+          successful: results.length,
+          failed: errors.length,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error in bulk query update:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error during bulk update",
+    });
+  }
+});
 
 export default router;

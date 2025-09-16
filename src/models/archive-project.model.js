@@ -1,4 +1,4 @@
-import mongoose, { Mongoose } from "mongoose";
+import mongoose from "mongoose";
 
 // Schema for individual progress updates (physical/work progress)
 const progressUpdateSchema = new mongoose.Schema(
@@ -441,6 +441,7 @@ const archiveProjectSchema = new mongoose.Schema(
     // Financial progress updates
     financialProgressUpdates: [financialProgressUpdateSchema],
 
+    // Queries related to the project
     queries: [raisedQuerySchema],
 
     // Track last updates
