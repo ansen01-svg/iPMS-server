@@ -214,6 +214,7 @@ const verifyOtp = async (req, res) => {
       email: user.email,
       name: user.fullName || "Incomplete User",
       departmentName: user.departmentName || "Unknown Department",
+      avatar: user.avatar || null,
     };
 
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "1h" });

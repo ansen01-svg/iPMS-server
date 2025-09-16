@@ -1,4 +1,5 @@
 import User from "../../models/user.model.js";
+import { deleteMultipleFilesFromFirebase } from "../../utils/firebase.js";
 
 // Get user profile
 export const getUserProfile = async (req, res) => {
@@ -37,6 +38,25 @@ export const getUserProfile = async (req, res) => {
   }
 };
 
+/**
+ * Helper function to extract file path from Firebase URL
+ */
+const getFilePathFromUrl = (url) => {
+  if (!url) return null;
+
+  try {
+    // Firebase Storage URLs typically contain the file path after '/o/' and before '?'
+    const match = url.match(/\/o\/(.*?)\?/);
+    if (match && match[1]) {
+      return decodeURIComponent(match[1]);
+    }
+    return null;
+  } catch (error) {
+    console.error("Error extracting file path from URL:", error);
+    return null;
+  }
+};
+
 // Update user profile
 export const updateUserProfile = async (req, res) => {
   try {
@@ -62,7 +82,6 @@ export const updateUserProfile = async (req, res) => {
 
     // Find the current user
     const currentUser = await User.findOne({ userId });
-    console.log("currentUser", currentUser);
 
     if (!currentUser) {
       return res.status(404).json({
@@ -73,8 +92,20 @@ export const updateUserProfile = async (req, res) => {
 
     // Prepare update object with only the fields that are provided
     const updateData = {};
+    let oldAvatarUrl = null;
 
-    if (avatar !== undefined) updateData.avatar = avatar;
+    // Handle avatar update with cleanup of old avatar
+    if (avatar !== undefined) {
+      // Store old avatar URL for potential cleanup
+      oldAvatarUrl = currentUser.avatar;
+      updateData.avatar = avatar;
+
+      console.log("Avatar update requested:", {
+        oldAvatar: oldAvatarUrl,
+        newAvatar: avatar,
+      });
+    }
+
     if (username !== undefined) {
       if (username.trim().length === 0) {
         return res.status(400).json({
@@ -138,9 +169,8 @@ export const updateUserProfile = async (req, res) => {
     }
 
     // Update user with validation
-
     const updatedUser = await User.findOneAndUpdate(
-      { userId }, // Filter object - this is the key correction
+      { userId }, // Filter object
       updateData,
       {
         new: true,
@@ -154,6 +184,21 @@ export const updateUserProfile = async (req, res) => {
         success: false,
         message: "User not found",
       });
+    }
+
+    // Clean up old avatar file if a new avatar was uploaded successfully
+    if (oldAvatarUrl && avatar && oldAvatarUrl !== avatar) {
+      const oldFilePath = getFilePathFromUrl(oldAvatarUrl);
+      if (oldFilePath) {
+        deleteMultipleFilesFromFirebase([oldFilePath])
+          .then(() => {
+            console.log("Old avatar file deleted successfully:", oldFilePath);
+          })
+          .catch((deleteError) => {
+            console.error("Error deleting old avatar file:", deleteError);
+            // Don't fail the request if cleanup fails
+          });
+      }
     }
 
     res.status(200).json({
