@@ -52,7 +52,7 @@ import {
 import { requireJe, requireLogin } from "../middlewares/auth.middleware.js";
 
 // File upload middleware
-import { createFileUploadMiddleware } from "../middlewares/projectFilesUpload.middleware.js";
+import { createFileUploadMiddleware } from "../middlewares/project-files-upload.middleware.js";
 
 // Status validation middleware
 import {
