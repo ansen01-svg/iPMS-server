@@ -33,7 +33,7 @@ import {
 
 // Authentication middleware
 import { requireJe, requireLogin } from "../middlewares/auth.middleware.js";
-import { createFileUploadMiddleware } from "../middlewares/projectFilesUpload.middleware.js";
+import { createFileUploadMiddleware } from "../middlewares/project-files-upload.middleware.js";
 
 // Validation middleware
 import {

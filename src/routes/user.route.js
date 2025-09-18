@@ -10,7 +10,7 @@ import { requireAdmin, requireLogin } from "../middlewares/auth.middleware.js";
 import {
   cleanupAvatarFile,
   uploadAvatarToFirebase,
-} from "../middlewares/avatarUpload.middleware.js";
+} from "../middlewares/avatar-upload.middleware.js";
 
 const router = express.Router();
 
