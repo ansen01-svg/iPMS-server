@@ -7,12 +7,12 @@ import Project from "../../models/project.model.js";
  */
 export const getDashboardKPIs = async (req, res) => {
   try {
-    const { userRole, userId } = req.user;
+    const { designation, userId } = req.user;
     const { includeArchive = false } = req.query;
 
     // Build filter based on user role
     const userFilter = {};
-    if (userRole === "JE") {
+    if (designation === "JE") {
       userFilter["createdBy.userId"] = userId;
     }
 
@@ -227,7 +227,7 @@ export const getDashboardKPIs = async (req, res) => {
     let archiveOverview = null;
     if (includeArchive === "true") {
       archiveOverview = await ArchiveProject.aggregate([
-        { $match: userRole === "JE" ? { "createdBy.userId": userId } : {} },
+        { $match: designation === "JE" ? { "createdBy.userId": userId } : {} },
         {
           $group: {
             _id: null,
@@ -341,7 +341,7 @@ export const getDashboardKPIs = async (req, res) => {
         }),
       },
       metadata: {
-        userRole,
+        designation,
         includesArchive: includeArchive === "true",
         generatedAt: new Date().toISOString(),
         dataRange: "last_30_days_activity",
@@ -365,7 +365,7 @@ export const getDashboardKPIs = async (req, res) => {
  */
 export const getRecentActivity = async (req, res) => {
   try {
-    const { userRole, userId } = req.user;
+    const { designation, userId } = req.user;
     const { limit = 10, days = 7 } = req.query;
 
     const limitNum = Math.min(parseInt(limit), 50); // Max 50 items
@@ -374,7 +374,7 @@ export const getRecentActivity = async (req, res) => {
 
     // Build filter based on user role
     const userFilter = {};
-    if (userRole === "JE") {
+    if (designation === "JE") {
       userFilter["createdBy.userId"] = userId;
     }
 
@@ -687,7 +687,7 @@ export const getRecentActivity = async (req, res) => {
  */
 export const getActionItems = async (req, res) => {
   try {
-    const { userRole, userId } = req.user;
+    const { designation, userId } = req.user;
     const { limit = 20 } = req.query;
 
     const limitNum = Math.min(parseInt(limit), 50);
@@ -695,7 +695,7 @@ export const getActionItems = async (req, res) => {
 
     // Build filter based on user role
     const userFilter = {};
-    if (userRole === "JE") {
+    if (designation === "JE") {
       userFilter["createdBy.userId"] = userId;
     }
 
@@ -707,10 +707,12 @@ export const getActionItems = async (req, res) => {
           {
             $match: {
               ...userFilter,
-              ...(userRole === "AEE" && { status: "Submitted for Approval" }),
-              ...(userRole === "CE" && { status: "Submitted for Approval" }),
-              ...(userRole === "MD" && { status: "Submitted for Approval" }),
-              ...(userRole === "JE" && {
+              ...(designation === "AEE" && {
+                status: "Submitted for Approval",
+              }),
+              ...(designation === "CE" && { status: "Submitted for Approval" }),
+              ...(designation === "MD" && { status: "Submitted for Approval" }),
+              ...(designation === "JE" && {
                 status: {
                   $in: ["Rejected by AEE", "Rejected by CE", "Rejected by MD"],
                 },
@@ -983,8 +985,8 @@ export const getActionItems = async (req, res) => {
     const allActionItems = [
       ...pendingApprovals.map((item) => ({
         ...item,
-        description: getApprovalDescription(item, userRole),
-        actionRequired: getApprovalAction(item, userRole),
+        description: getApprovalDescription(item, designation),
+        actionRequired: getApprovalAction(item, designation),
         daysWaiting: Math.ceil(item.daysWaiting),
       })),
       ...overdueProjects.map((item) => ({
@@ -1056,10 +1058,10 @@ export const getActionItems = async (req, res) => {
       data: {
         actionItems: sortedActionItems,
         summary,
-        userCapabilities: getUserCapabilities(userRole),
+        userCapabilities: getUserCapabilities(designation),
       },
       metadata: {
-        userRole,
+        designation,
         limit: limitNum,
         generatedAt: new Date().toISOString(),
       },
