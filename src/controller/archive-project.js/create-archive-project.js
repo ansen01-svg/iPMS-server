@@ -29,7 +29,10 @@ const createArchiveProject = async (req, res) => {
     }
 
     const utcTimestamp = Date.now();
-    const projectId = `${AANumber.slice(0, 5)}_${utcTimestamp}`;
+    const projectId = `${AANumber.slice(0, 5).replace(
+      /\//g,
+      "-"
+    )}_${utcTimestamp}`;
 
     // Additional business logic validation
     if (billSubmittedAmount > workValue) {

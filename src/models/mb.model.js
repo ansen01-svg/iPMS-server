@@ -4,10 +4,20 @@ const measurementBookSchema = new mongoose.Schema(
   {
     project: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Project",
       required: [true, "Project reference is required"],
       index: true,
+      // Dynamic reference - will be populated based on projectType
+      refPath: "projectType",
     },
+
+    // New field to indicate which model the project belongs to
+    projectType: {
+      type: String,
+      required: [true, "Project type is required"],
+      enum: ["Project", "ArchiveProject"],
+      index: true,
+    },
+
     description: {
       type: String,
       required: [true, "MB description is required"],
@@ -88,12 +98,14 @@ const measurementBookSchema = new mongoose.Schema(
       trim: true,
       maxlength: [500, "Remarks cannot exceed 500 characters"],
     },
+
     approvedBy: {
       userId: String,
       name: String,
       role: String,
       approvedAt: Date,
     },
+
     rejectionReason: {
       type: String,
       trim: true,
@@ -107,21 +119,19 @@ const measurementBookSchema = new mongoose.Schema(
   }
 );
 
-// Indexes for better performance
-measurementBookSchema.index({ projectId: 1, createdAt: -1 });
-measurementBookSchema.index({ projectId: 1, status: 1 });
-measurementBookSchema.index({ measurementDate: -1 });
-measurementBookSchema.index({ mbNumber: 1, projectId: 1 }, { unique: true });
+// Updated indexes for better performance
+measurementBookSchema.index({ project: 1, projectType: 1, createdAt: -1 });
+measurementBookSchema.index({ project: 1, projectType: 1 });
+measurementBookSchema.index({ projectType: 1, createdAt: -1 });
+measurementBookSchema.index({ "createdBy.userId": 1, projectType: 1 });
 
 // Text index for search functionality
 measurementBookSchema.index({
-  title: "text",
   description: "text",
-  contractorName: "text",
   remarks: "text",
 });
 
-// Virtual for file URL (you can customize this based on your file serving setup)
+// Virtual for file URL
 measurementBookSchema.virtual("fileUrl").get(function () {
   if (this.uploadedFile && this.uploadedFile.filePath) {
     return `/api/files/${this.uploadedFile.fileName}`;
@@ -151,37 +161,45 @@ measurementBookSchema.pre("save", function (next) {
 
 // Static methods
 measurementBookSchema.statics.findByProject = function (
-  projectId,
+  projectObjectId, // MongoDB ObjectId, not projectId string
+  projectType,
   options = {}
 ) {
   const {
     page = 1,
     limit = 10,
-    status,
     sortBy = "createdAt",
     sortOrder = -1,
   } = options;
   const skip = (page - 1) * limit;
 
-  const query = { projectId };
-  if (status) query.status = status;
+  const query = { project: projectObjectId, projectType };
 
   return this.find(query)
-    .populate("project", "projectName workOrderNumber")
+    .populate("project")
     .sort({ [sortBy]: sortOrder })
     .skip(skip)
     .limit(limit);
 };
 
-measurementBookSchema.statics.countByProject = function (projectId, status) {
-  const query = { projectId };
-  if (status) query.status = status;
-  return this.countDocuments(query);
+measurementBookSchema.statics.countByProject = function (
+  projectObjectId,
+  projectType
+) {
+  return this.countDocuments({ project: projectObjectId, projectType });
+};
+
+// Static method to create multiple MBs
+measurementBookSchema.statics.createMultiple = async function (
+  mbDataArray,
+  session = null
+) {
+  const options = session ? { session } : {};
+  return await this.insertMany(mbDataArray, options);
 };
 
 // Instance methods
 measurementBookSchema.methods.approve = function (approverInfo) {
-  this.status = "Approved";
   this.approvedBy = {
     userId: approverInfo.userId,
     name: approverInfo.name,
@@ -192,7 +210,6 @@ measurementBookSchema.methods.approve = function (approverInfo) {
 };
 
 measurementBookSchema.methods.reject = function (rejectorInfo, reason) {
-  this.status = "Rejected";
   this.rejectionReason = reason;
   this.lastModifiedBy = {
     userId: rejectorInfo.userId,

@@ -1,216 +1,85 @@
 import MeasurementBook from "../../models/mb.model.js";
-import Project from "../../models/project.model.js";
+import {
+  findProjectByProjectId,
+  getUnifiedProjectFields,
+} from "../../utils/projects-filter.js";
 
-const getMeasurementBooks = async (req, res) => {
+const getMeasurementBooksByProject = async (req, res) => {
   try {
     const { projectId } = req.params;
     const {
       page = 1,
       limit = 10,
       sortBy = "createdAt",
-      sortOrder = "desc",
-      search,
-      dateFrom,
-      dateTo,
-      hasRemarks,
-      isApproved,
+      sortOrder = -1,
     } = req.query;
 
-    // Validate project ID format
-    if (!projectId || projectId.length !== 24) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid project ID format",
-      });
+    // Parse and validate sortOrder - ensure it's always 1 or -1
+    let validSortOrder = -1; // default to descending
+    if (sortOrder) {
+      const parsedSortOrder = parseInt(sortOrder);
+      if (!isNaN(parsedSortOrder)) {
+        validSortOrder = parsedSortOrder >= 0 ? 1 : -1;
+      } else if (typeof sortOrder === "string") {
+        // Handle string values like 'asc', 'desc'
+        validSortOrder = sortOrder.toLowerCase() === "asc" ? 1 : -1;
+      }
     }
 
-    // Check if user is authenticated
-    if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        message: "User authentication required",
-      });
-    }
+    // Parse and validate other numeric parameters
+    const validPage = Math.max(1, parseInt(page) || 1);
+    const validLimit = Math.max(1, Math.min(100, parseInt(limit) || 10)); // Cap limit at 100
 
-    // Validate that project exists
-    const project = await Project.findById(projectId);
-    if (!project) {
+    // Find the project in either collection using projectId string
+    const projectResult = await findProjectByProjectId(projectId);
+
+    if (!projectResult) {
       return res.status(404).json({
         success: false,
-        message: "Project not found",
-      });
-    }
-    console.log("Project found:", project.projectName);
-
-    // Build query
-    let query = { project: projectId };
-
-    // Add search functionality (uses text index from schema)
-    if (search && search.trim()) {
-      query.$text = { $search: search.trim() };
-    }
-
-    // Add date range filter
-    if (dateFrom || dateTo) {
-      query.createdAt = {};
-      if (dateFrom) {
-        query.createdAt.$gte = new Date(dateFrom);
-      }
-      if (dateTo) {
-        const endDate = new Date(dateTo);
-        endDate.setHours(23, 59, 59, 999); // Include the entire end date
-        query.createdAt.$lte = endDate;
-      }
-    }
-
-    // Filter by remarks presence
-    if (hasRemarks === "true") {
-      query.remarks = { $exists: true, $ne: null, $ne: "" };
-    } else if (hasRemarks === "false") {
-      query.$or = [
-        { remarks: { $exists: false } },
-        { remarks: null },
-        { remarks: "" },
-      ];
-    }
-
-    // Filter by approval status
-    if (isApproved === "true") {
-      query.approvedBy = { $exists: true, $ne: null };
-    } else if (isApproved === "false") {
-      query.$or = [{ approvedBy: { $exists: false } }, { approvedBy: null }];
-    }
-
-    // Parse pagination parameters
-    const pageNumber = parseInt(page);
-    const limitNumber = parseInt(limit);
-    const skip = (pageNumber - 1) * limitNumber;
-
-    // Validate pagination parameters
-    if (pageNumber < 1 || limitNumber < 1 || limitNumber > 100) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid pagination parameters. Page must be >= 1, limit must be between 1-100",
+        message: `Project with ID '${projectId}' not found in either Project or ArchiveProject collections`,
       });
     }
 
-    // Parse sort order
-    const sortOrderValue = sortOrder === "desc" ? -1 : 1;
+    const { project, projectType } = projectResult;
 
-    // Validate sortBy field
-    const allowedSortFields = ["createdAt", "updatedAt", "description"];
-    if (!allowedSortFields.includes(sortBy)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid sort field. Allowed fields: ${allowedSortFields.join(
-          ", "
-        )}`,
-      });
-    }
-
-    // Execute queries in parallel for better performance
-    const [measurementBooks, totalCount] = await Promise.all([
-      MeasurementBook.find(query)
-        .populate(
-          "project",
-          "projectName workOrderNumber estimatedCost district"
-        )
-        .sort({ [sortBy]: sortOrderValue })
-        .skip(skip)
-        .limit(limitNumber)
-        .lean(), // Use lean() for better performance
-      MeasurementBook.countDocuments(query),
-    ]);
-
-    // Calculate pagination metadata
-    const totalPages = Math.ceil(totalCount / limitNumber);
-
-    // Get summary statistics
-    const summaryStats = await MeasurementBook.aggregate([
-      { $match: { project: project._id } },
+    // Get measurement books for this project (using MongoDB ObjectId for efficient query)
+    const measurementBooks = await MeasurementBook.findByProject(
+      project._id, // Use MongoDB ObjectId for database query
+      projectType,
       {
-        $group: {
-          _id: null,
-          total: { $sum: 1 },
-          withRemarks: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $ne: ["$remarks", null] },
-                    { $ne: ["$remarks", ""] },
-                  ],
-                },
-                1,
-                0,
-              ],
-            },
-          },
-          approved: {
-            $sum: {
-              $cond: [{ $ne: ["$approvedBy", null] }, 1, 0],
-            },
-          },
-          totalFileSize: { $sum: "$uploadedFile.fileSize" },
-          avgFileSize: { $avg: "$uploadedFile.fileSize" },
-        },
-      },
-    ]);
+        page: validPage,
+        limit: validLimit,
+        sortBy,
+        sortOrder: validSortOrder, // Use validated sort order
+      }
+    );
 
-    const stats = summaryStats[0] || {
-      total: 0,
-      withRemarks: 0,
-      approved: 0,
-      totalFileSize: 0,
-      avgFileSize: 0,
-    };
+    const totalCount = await MeasurementBook.countByProject(
+      project._id,
+      projectType
+    );
+    const totalPages = Math.ceil(totalCount / validLimit);
 
-    res.json({
+    // Get unified project fields
+    const unifiedProject = getUnifiedProjectFields(project, projectType);
+
+    res.status(200).json({
       success: true,
       data: {
         measurementBooks,
+        project: unifiedProject,
         pagination: {
-          currentPage: pageNumber,
+          currentPage: validPage,
           totalPages,
           totalCount,
-          hasNextPage: pageNumber < totalPages,
-          hasPrevPage: pageNumber > 1,
-          limit: limitNumber,
-        },
-        project: {
-          id: project._id,
-          projectName: project.projectName,
-          workOrderNumber: project.workOrderNumber,
-        },
-        summary: {
-          totalMBs: stats.total,
-          withRemarks: stats.withRemarks,
-          approved: stats.approved,
-          totalFileSize: stats.totalFileSize,
-          avgFileSize: Math.round(stats.avgFileSize || 0),
-          humanReadableTotalSize: formatFileSize(stats.totalFileSize || 0),
-        },
-        filters: {
-          search: search || null,
-          dateFrom: dateFrom || null,
-          dateTo: dateTo || null,
-          hasRemarks: hasRemarks || null,
-          isApproved: isApproved || null,
+          hasNextPage: validPage < totalPages,
+          hasPrevPage: validPage > 1,
+          limit: validLimit,
         },
       },
     });
   } catch (error) {
-    console.error("Error fetching Measurement Books:", error);
-
-    // Handle cast errors
-    if (error.name === "CastError") {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid project ID format",
-      });
-    }
-
+    console.error("Error fetching measurement books:", error);
     res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -220,12 +89,4 @@ const getMeasurementBooks = async (req, res) => {
   }
 };
 
-// Helper function to format file size
-const formatFileSize = (bytes) => {
-  if (bytes === 0) return "0 B";
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return Math.round((bytes / Math.pow(1024, i)) * 100) / 100 + " " + sizes[i];
-};
-
-export default getMeasurementBooks;
+export default getMeasurementBooksByProject;

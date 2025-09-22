@@ -1,75 +1,44 @@
 import MeasurementBook from "../../models/mb.model.js";
+import { getUnifiedProjectFields } from "../../utils/projects-filter.js";
 
-const getSingleMeasurementBook = async (req, res) => {
+// Get measurement book by ID with populated project details
+const getMeasurementBookById = async (req, res) => {
   try {
     const { mbId } = req.params;
 
-    // Validate mbId format
-    if (!mbId || mbId.length !== 24) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid Measurement Book ID format",
-      });
-    }
-
-    // Check if user is authenticated
-    if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        message: "User authentication required",
-      });
-    }
-
-    // Find measurement book and populate project details
     const measurementBook = await MeasurementBook.findById(mbId).populate(
-      "project",
-      "projectName workOrderNumber estimatedCost district state"
+      "project"
     );
 
     if (!measurementBook) {
       return res.status(404).json({
         success: false,
-        message: "Measurement Book not found",
+        message: "Measurement book not found",
       });
     }
 
-    // Add computed fields using virtuals
-    const mbData = measurementBook.toJSON();
+    // Get unified project fields
+    const unifiedProject = getUnifiedProjectFields(
+      measurementBook.project,
+      measurementBook.projectType
+    );
 
-    res.json({
+    res.status(200).json({
       success: true,
       data: {
-        ...mbData,
-        // Include virtual fields
-        fileUrl: measurementBook.fileUrl,
-        humanReadableFileSize: measurementBook.humanReadableFileSize,
-        // Additional metadata
-        metadata: {
-          isFileAvailable: !!(
-            measurementBook.uploadedFile &&
-            measurementBook.uploadedFile.downloadURL
-          ),
-          hasRemarks: !!measurementBook.remarks,
-          isApproved: !!measurementBook.approvedBy,
-          isRejected: !!measurementBook.rejectionReason,
-          lastModified:
-            measurementBook.lastModifiedBy?.modifiedAt ||
-            measurementBook.updatedAt,
-          ageInDays: Math.floor(
-            (new Date() - new Date(measurementBook.createdAt)) /
-              (1000 * 60 * 60 * 24)
-          ),
+        measurementBook: {
+          ...measurementBook.toObject(),
+          project: unifiedProject,
         },
       },
     });
   } catch (error) {
-    console.error("Error fetching Measurement Book:", error);
+    console.error("Error fetching measurement book:", error);
 
-    // Handle invalid ObjectId
     if (error.name === "CastError") {
       return res.status(400).json({
         success: false,
-        message: "Invalid Measurement Book ID format",
+        message: "Invalid measurement book ID format",
       });
     }
 
@@ -82,4 +51,4 @@ const getSingleMeasurementBook = async (req, res) => {
   }
 };
 
-export default getSingleMeasurementBook;
+export default getMeasurementBookById;

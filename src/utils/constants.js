@@ -94,11 +94,20 @@ export const districts = [
 ];
 
 export const typeOfWork = [
-  "Construction",
-  "Repair & Renovation",
-  "Consultancy",
-  "Survey",
-  "Monitoring & Evaluation",
+  "Building Works",
+  "Road Constuction",
+  "Bridge Constuction",
+  "Repairing/Renovation Works",
+  "Upgradation Works",
+  "Water Supply",
+  "Internal Electrification",
+  "Interior Works",
+  "Boundary wall",
+  "Land Development",
+  "Landscaping",
+  "Maintenance Works",
+  "Upgradation Works",
+  "Other developments",
 ];
 
 export const natureOfWork = [

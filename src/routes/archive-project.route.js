@@ -4,7 +4,7 @@ import createArchiveProject from "../controller/archive-project.js/create-archiv
 import getAllArchiveProjects from "../controller/archive-project.js/get-all-archive-projects.js";
 import getFilterOptions from "../controller/archive-project.js/get-filter-options.js";
 import {
-  getArchiveProjectById,
+  getArchiveProjectByProjectId,
   getArchiveProjectTimeline,
 } from "../controller/archive-project.js/get-single-archive-project.js";
 import { getArchiveProjectsSummary } from "../controller/archive-project.js/get-summary.js";
@@ -82,7 +82,7 @@ router.get("/filter-options", requireLogin(), getFilterOptions);
 router.get("/summary", requireLogin(), getArchiveProjectsSummary);
 
 // Get single archive project by ID
-router.get("/:id", requireLogin(), getArchiveProjectById);
+router.get("/:id", requireLogin(), getArchiveProjectByProjectId);
 
 // Get project timeline/history
 router.get("/:id/timeline", requireLogin(), getArchiveProjectTimeline);
