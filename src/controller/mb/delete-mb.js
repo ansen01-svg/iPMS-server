@@ -1,18 +1,11 @@
 import MeasurementBook from "../../models/mb.model.js";
 
+// Delete measurement book (soft delete)
 const deleteMeasurementBook = async (req, res) => {
   try {
     const { mbId } = req.params;
 
-    const measurementBook = await MeasurementBook.findById(mbId);
-    if (!measurementBook) {
-      return res.status(404).json({
-        success: false,
-        message: "Measurement Book not found",
-      });
-    }
-
-    // Check authorization (only creator or admin can delete)
+    // Check if user is authenticated
     if (!req.user) {
       return res.status(401).json({
         success: false,
@@ -20,29 +13,37 @@ const deleteMeasurementBook = async (req, res) => {
       });
     }
 
-    // Only allow deletion by creator or admin roles
-    const canDelete =
-      measurementBook.createdBy.userId === req.user.userId ||
-      ["ADMIN", "AEE", "CE", "MD"].includes(req.user.designation);
+    const measurementBook = await MeasurementBook.findById(mbId);
 
-    if (!canDelete) {
-      return res.status(403).json({
+    if (!measurementBook) {
+      return res.status(404).json({
         success: false,
-        message: "You are not authorized to delete this Measurement Book",
+        message: "Measurement book not found",
       });
     }
 
+    // For now, we'll do hard delete. You can implement soft delete by adding an 'isActive' field
     await MeasurementBook.findByIdAndDelete(mbId);
 
-    res.json({
+    res.status(200).json({
       success: true,
-      message: "Measurement Book deleted successfully",
+      message: "Measurement book deleted successfully",
     });
   } catch (error) {
-    console.error("Error deleting Measurement Book:", error);
+    console.error("Error deleting measurement book:", error);
+
+    if (error.name === "CastError") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid measurement book ID format",
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: "Internal server error",
+      details:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };

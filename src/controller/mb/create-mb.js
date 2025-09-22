@@ -1,44 +1,23 @@
+import mongoose from "mongoose";
+import ArchiveProject from "../../models/archive-project.model.js";
 import MeasurementBook from "../../models/mb.model.js";
 import Project from "../../models/project.model.js";
 
-const createMeasurementBook = async (req, res) => {
+const createMeasurementBooks = async (req, res) => {
+  // Start a session for transaction
+  const session = await mongoose.startSession();
+  let transactionCommitted = false;
+
   try {
-    const {
-      project,
-      description,
-      remarks,
-      uploadedFile, // This comes from the Firebase middleware
-    } = req.body;
+    await session.startTransaction();
 
-    // Validate required fields based on schema
-    if (!project) {
+    const { measurementBooks } = req.body;
+
+    // Validate that measurementBooks is an array
+    if (!Array.isArray(measurementBooks) || measurementBooks.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Project reference is required",
-      });
-    }
-
-    if (!description) {
-      return res.status(400).json({
-        success: false,
-        message: "Description is required",
-      });
-    }
-
-    // Validate uploaded file (should be set by middleware)
-    if (!uploadedFile) {
-      return res.status(400).json({
-        success: false,
-        message: "File upload is required",
-      });
-    }
-
-    // Check if project exists
-    const existingProject = await Project.findById(project);
-    if (!existingProject) {
-      return res.status(404).json({
-        success: false,
-        message: "Project not found",
+        message: "measurementBooks must be a non-empty array",
       });
     }
 
@@ -50,46 +29,136 @@ const createMeasurementBook = async (req, res) => {
       });
     }
 
-    // Create new Measurement Book based on actual schema
-    const measurementBook = new MeasurementBook({
-      project: existingProject._id,
-      description: description.trim(),
-      remarks: remarks?.trim(),
-      uploadedFile: {
-        fileName: uploadedFile.fileName,
-        originalName: uploadedFile.originalName,
-        downloadURL: uploadedFile.downloadURL,
-        filePath: uploadedFile.filePath,
-        fileSize: uploadedFile.fileSize,
-        mimeType: uploadedFile.mimeType,
-        fileType: uploadedFile.fileType,
-        uploadedAt: new Date(),
-      },
-      createdBy: {
-        userId: req.user.userId || req.user._id?.toString(),
-        name: req.user.fullName || req.user.username || req.user.name,
-        role: req.user.designation || req.user.role,
-      },
-    });
+    const validatedMBs = [];
+    const errors = [];
 
-    // Save the measurement book
-    const savedMB = await measurementBook.save();
+    // Validate each measurement book in the array
+    for (let i = 0; i < measurementBooks.length; i++) {
+      const mbData = measurementBooks[i];
+      const index = i + 1;
 
-    // Populate project details for response
-    const populatedMB = await MeasurementBook.findById(savedMB._id).populate(
-      "project",
-      "projectName workOrderNumber estimatedCost district"
+      try {
+        // Validate required fields
+        if (!mbData.project) {
+          errors.push(`MB ${index}: Project ID is required`);
+          continue;
+        }
+
+        if (!mbData.description) {
+          errors.push(`MB ${index}: Description is required`);
+          continue;
+        }
+
+        if (!mbData.uploadedFile) {
+          errors.push(`MB ${index}: File upload is required`);
+          continue;
+        }
+
+        // Find project by projectId string in both Project and ArchiveProject collections
+        let existingProject = null;
+        let projectType = null;
+
+        // First check in Project collection using projectId field
+        existingProject = await Project.findOne({
+          projectId: mbData.project,
+        }).session(session);
+        if (existingProject) {
+          projectType = "Project";
+        } else {
+          // If not found in Project, check in ArchiveProject using projectId field
+          existingProject = await ArchiveProject.findOne({
+            projectId: mbData.project,
+          }).session(session);
+          if (existingProject) {
+            projectType = "ArchiveProject";
+          }
+        }
+
+        if (!existingProject) {
+          errors.push(
+            `MB ${index}: Project with ID '${mbData.project}' not found in either Project or ArchiveProject collections`
+          );
+          continue;
+        }
+
+        // Create MB object with proper structure
+        // Note: We store the MongoDB _id in the project field, but lookup was done by projectId
+        const measurementBookData = {
+          project: existingProject._id, // Store MongoDB ObjectId
+          projectType,
+          description: mbData.description.trim(),
+          remarks: mbData.remarks?.trim(),
+          uploadedFile: {
+            fileName: mbData.uploadedFile.fileName,
+            originalName: mbData.uploadedFile.originalName,
+            downloadURL: mbData.uploadedFile.downloadURL,
+            filePath: mbData.uploadedFile.filePath,
+            fileSize: mbData.uploadedFile.fileSize,
+            mimeType: mbData.uploadedFile.mimeType,
+            fileType: mbData.uploadedFile.fileType,
+            uploadedAt: new Date(),
+          },
+          createdBy: {
+            userId: req.user.userId || req.user._id?.toString(),
+            name: req.user.fullName || req.user.username || req.user.name,
+            role: req.user.designation || req.user.role,
+          },
+        };
+
+        // Add metadata for response
+        measurementBookData._projectId = mbData.project; // Store original projectId for reference
+        measurementBookData._projectType = projectType;
+
+        validatedMBs.push(measurementBookData);
+      } catch (error) {
+        errors.push(`MB ${index}: ${error.message}`);
+      }
+    }
+
+    // If there are validation errors, return them
+    if (errors.length > 0) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed for some measurement books",
+        errors,
+        validatedCount: validatedMBs.length,
+        totalCount: measurementBooks.length,
+      });
+    }
+
+    // Create all measurement books in a transaction
+    const savedMBs = await MeasurementBook.createMultiple(
+      validatedMBs,
+      session
     );
+
+    // Commit the transaction
+    await session.commitTransaction();
+    transactionCommitted = true;
 
     res.status(201).json({
       success: true,
-      message: "Measurement Book created successfully",
-      data: populatedMB,
+      message: `${savedMBs.length} Measurement Books created successfully`,
+      data: {
+        summary: {
+          totalCreated: savedMBs.length,
+        },
+      },
     });
   } catch (error) {
-    console.error("Error creating Measurement Book:", error);
+    // Only rollback transaction if it hasn't been committed yet
+    if (!transactionCommitted) {
+      try {
+        await session.abortTransaction();
+      } catch (abortError) {
+        console.error("Error aborting transaction:", abortError);
+      }
+    }
 
-    // Handle validation errors
+    console.error("Error creating Measurement Books:", error);
+
+    // Handle specific MongoDB errors
     if (error.name === "ValidationError") {
       const validationErrors = Object.values(error.errors).map(
         (err) => err.message
@@ -114,7 +183,7 @@ const createMeasurementBook = async (req, res) => {
     if (error.name === "CastError") {
       return res.status(400).json({
         success: false,
-        message: "Invalid project ID format",
+        message: "Invalid data format",
       });
     }
 
@@ -124,7 +193,35 @@ const createMeasurementBook = async (req, res) => {
       details:
         process.env.NODE_ENV === "development" ? error.message : undefined,
     });
+  } finally {
+    // End the session
+    try {
+      await session.endSession();
+    } catch (endSessionError) {
+      console.error("Error ending session:", endSessionError);
+    }
   }
 };
 
-export default createMeasurementBook;
+// Backward compatibility: Single MB creation
+const createSingleMeasurementBook = async (req, res) => {
+  // Wrap single MB data in array format and call the main function
+  const originalBody = req.body;
+  req.body = {
+    measurementBooks: [originalBody],
+  };
+
+  const result = await createMeasurementBooks(req, res);
+
+  // If successful, modify response to return single object instead of array
+  if (res.statusCode === 201) {
+    // Note: This is a simplified approach. In a real implementation,
+    // you might want to modify the response format more carefully
+    return;
+  }
+
+  return result;
+};
+
+export default createMeasurementBooks;
+export { createSingleMeasurementBook };
