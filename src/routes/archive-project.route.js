@@ -54,6 +54,8 @@ import {
   validateFinancialProgressStatisticsQuery,
 } from "../middlewares/validate-archive-project-financial-progress.middleware.js";
 
+import { queryFileUploadMiddleware } from "../middlewares/query-file-upload.middleware.js";
+
 import {
   generateBulkProjectSummaryPDF,
   generateProjectSummaryPDFController,
@@ -480,7 +482,12 @@ router.get("/queries/search", requireLogin(), searchQueries);
 router.get("/queries/:queryId", requireLogin(), getQueryById);
 
 // Update a query (JE only)
-router.put("/queries/:queryId", requireLogin(), updateQuery);
+router.put(
+  "/queries/:queryId",
+  requireLogin(),
+  ...queryFileUploadMiddleware,
+  updateQuery
+);
 
 // Delete (soft delete) a query (JE only)
 router.delete("/queries/:queryId", requireLogin(), deleteQuery);

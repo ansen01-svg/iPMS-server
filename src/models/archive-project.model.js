@@ -316,7 +316,48 @@ const raisedQuerySchema = new mongoose.Schema(
         ref: "RaisedQuery",
       },
     ],
-    attachmentReferences: [String], // Store file names/paths if needed later
+    attachments: [
+      {
+        fileName: {
+          type: String,
+          required: true,
+        },
+        originalName: {
+          type: String,
+          required: true,
+        },
+        downloadURL: {
+          type: String,
+          required: true,
+        },
+        filePath: {
+          type: String,
+          required: true, // Firebase storage path for deletion
+        },
+        fileSize: {
+          type: Number,
+          required: true,
+        },
+        mimeType: {
+          type: String,
+          required: true,
+        },
+        fileType: {
+          type: String,
+          enum: ["document", "image"],
+          required: true,
+        },
+        uploadedAt: {
+          type: Date,
+          default: Date.now,
+        },
+        uploadedBy: {
+          userId: String,
+          userName: String,
+          userDesignation: String,
+        },
+      },
+    ],
     isActive: {
       type: Boolean,
       default: true,
@@ -576,6 +617,17 @@ archiveProjectSchema.virtual("latestFinancialProgressUpdate").get(function () {
     ];
   }
   return null;
+});
+
+// Virtual for total attachments count
+raisedQuerySchema.virtual("totalAttachments").get(function () {
+  return this.attachments ? this.attachments.length : 0;
+});
+
+// Virtual for latest attachment
+raisedQuerySchema.virtual("latestAttachment").get(function () {
+  if (!this.attachments || this.attachments.length === 0) return null;
+  return this.attachments.sort((a, b) => b.uploadedAt - a.uploadedAt)[0];
 });
 
 // Pre-save middleware

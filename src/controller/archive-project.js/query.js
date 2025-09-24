@@ -2,9 +2,9 @@ import mongoose from "mongoose";
 import ArchiveProject from "../../models/archive-project.model.js";
 
 /**
- * Create a new query for a project
+ * Create a new query for an archive project
  * POST /api/archive-projects/:id/queries
-//  */
+ */
 export const createQuery = async (req, res) => {
   const session = await mongoose.startSession();
 
@@ -26,7 +26,6 @@ export const createQuery = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       throw new Error("INVALID_PROJECT_ID");
     }
-    console.log("projectid", id);
 
     if (
       !queryTitle ||
@@ -47,7 +46,6 @@ export const createQuery = async (req, res) => {
     if (!project) {
       throw new Error("PROJECT_NOT_FOUND");
     }
-    console.log("project", project._id);
 
     // Generate unique queryId
     const existingQueries = await ArchiveProject.aggregate([
@@ -80,28 +78,21 @@ export const createQuery = async (req, res) => {
       escalationLevel: 0,
       isActive: true,
     };
-    console.log("query", newQuery);
 
     // Add query to project
     project.queries.push(newQuery);
-    console.log("newProject", project);
-
-    // console.log("session", session);
 
     await project.save({ session });
 
-    console.log("here");
-
     // Get the newly created query
     const createdQuery = project.queries[project.queries.length - 1];
-    console.log("createQuery", createQuery);
 
     // Commit transaction
     await session.commitTransaction();
 
     // Log successful creation
     console.log(
-      `Query created successfully: ${queryId} for project ${id} by user: ${user.id}`
+      `Query created successfully: ${queryId} for archive project ${id} by user: ${user.id}`
     );
 
     // Success response
@@ -112,7 +103,6 @@ export const createQuery = async (req, res) => {
         query: createdQuery,
         projectInfo: {
           projectId: project._id,
-
           nameOfWork: project.nameOfWork,
           concernedEngineer: project.concernedEngineer,
         },
@@ -226,7 +216,7 @@ export const createQuery = async (req, res) => {
 };
 
 /**
- * Get queries for a project with filtering and pagination
+ * Get queries for an archive project with filtering and pagination
  * GET /api/archive-projects/:id/queries
  */
 export const getProjectQueries = async (req, res) => {
@@ -350,7 +340,7 @@ export const getProjectQueries = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "Project queries retrieved successfully",
+      message: "Archive project queries retrieved successfully",
       data: {
         projectInfo: {
           projectId: project.projectId,
@@ -379,7 +369,7 @@ export const getProjectQueries = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Error retrieving project queries:", error);
+    console.error("Error retrieving archive project queries:", error);
     res.status(500).json({
       success: false,
       message: "Internal server error occurred while retrieving queries",
@@ -389,7 +379,7 @@ export const getProjectQueries = async (req, res) => {
 
 /**
  * Get a single query by queryId
- * GET /api/queries/:queryId
+ * GET /api/archive-project/queries/:queryId
  */
 export const getQueryById = async (req, res) => {
   try {
@@ -467,8 +457,8 @@ export const getQueryById = async (req, res) => {
 };
 
 /**
- * Update a query
- * PUT /api/queries/:queryId
+ * Update a query with file upload support
+ * PUT /api/archive-project/queries/:queryId
  */
 export const updateQuery = async (req, res) => {
   const session = await mongoose.startSession();
@@ -477,18 +467,10 @@ export const updateQuery = async (req, res) => {
     await session.startTransaction();
 
     const { queryId } = req.params;
-    const {
-      queryTitle,
-      queryDescription,
-      queryCategory,
-      priority,
-      status,
-      assignedTo,
-      expectedResolutionDate,
-      queryResponse,
-      internalRemarks,
-    } = req.body;
+    // Only destructure the fields that are actually sent from frontend
+    const { status, queryResponse } = req.body;
     const user = req.user;
+    const uploadedFiles = req.queryFiles || []; // Files from middleware
 
     // Check user authorization
     if (!user || user.designation !== "JE") {
@@ -512,21 +494,39 @@ export const updateQuery = async (req, res) => {
 
     // Store previous values for response
     const previousStatus = query.status;
-    const previousAssignedTo = query.assignedTo;
+    const previousAttachmentCount = query.attachments
+      ? query.attachments.length
+      : 0;
 
-    // Update fields if provided
-    if (queryTitle !== undefined) query.queryTitle = queryTitle.trim();
-    if (queryDescription !== undefined)
-      query.queryDescription = queryDescription.trim();
-    if (queryCategory !== undefined) query.queryCategory = queryCategory;
-    if (priority !== undefined) query.priority = priority;
-    if (assignedTo !== undefined) query.assignedTo = assignedTo.trim();
-    if (expectedResolutionDate !== undefined) {
-      const expectedDate = new Date(expectedResolutionDate);
-      if (expectedDate <= new Date()) {
-        throw new Error("INVALID_EXPECTED_DATE");
+    // Handle file attachments
+    if (uploadedFiles && uploadedFiles.length > 0) {
+      const attachmentsToAdd = uploadedFiles.map((file) => ({
+        fileName: file.fileName,
+        originalName: file.originalName,
+        downloadURL: file.downloadURL,
+        filePath: file.filePath,
+        fileSize: file.fileSize,
+        mimeType: file.mimeType,
+        fileType: file.fileType,
+        uploadedAt: new Date(),
+        uploadedBy: {
+          userId: user.id,
+          userName: user.name || user.username,
+          userDesignation: user.designation,
+        },
+      }));
+
+      // Initialize attachments array if it doesn't exist
+      if (!query.attachments) {
+        query.attachments = [];
       }
-      query.expectedResolutionDate = expectedDate;
+
+      // Add new attachments
+      query.attachments.push(...attachmentsToAdd);
+
+      console.log(
+        `Added ${attachmentsToAdd.length} file attachments to archive query ${queryId}`
+      );
     }
 
     // Handle status updates
@@ -540,30 +540,20 @@ export const updateQuery = async (req, res) => {
       ) {
         query.actualResolutionDate = new Date();
       }
-
-      // Set to In Progress if assigning to someone
-      if (assignedTo && status === "Open") {
-        query.status = "In Progress";
-      }
     }
 
     // Handle query response
-    if (queryResponse !== undefined) {
+    if (queryResponse !== undefined && queryResponse.trim() !== "") {
       query.queryResponse = queryResponse.trim();
+      // Auto-resolve when response is added
       if (query.status === "Open" || query.status === "In Progress") {
         query.status = "Resolved";
         query.actualResolutionDate = new Date();
       }
     }
 
-    // Handle internal remarks (append with timestamp)
-    if (internalRemarks !== undefined && internalRemarks.trim()) {
-      const timestamp = new Date().toISOString();
-      const newRemark = `[${timestamp}] ${internalRemarks.trim()}`;
-      query.internalRemarks = query.internalRemarks
-        ? `${query.internalRemarks}\n${newRemark}`
-        : newRemark;
-    }
+    // Mark the queries array as modified to avoid circular reference issues
+    project.markModified("queries");
 
     // Save the project
     await project.save({ session });
@@ -572,27 +562,76 @@ export const updateQuery = async (req, res) => {
     await session.commitTransaction();
 
     // Log successful update
-    console.log(`Query updated successfully: ${queryId} by user: ${user.id}`);
+    console.log(
+      `Archive query updated successfully: ${queryId} by user: ${user.id}`
+    );
 
     // Prepare change summary
     const changes = {};
-    if (status && status !== previousStatus)
+    if (status && status !== previousStatus) {
       changes.status = { from: previousStatus, to: status };
-    if (assignedTo && assignedTo !== previousAssignedTo)
-      changes.assignedTo = { from: previousAssignedTo, to: assignedTo };
+    }
+    if (uploadedFiles && uploadedFiles.length > 0) {
+      changes.attachments = {
+        from: previousAttachmentCount,
+        to: query.attachments.length,
+        filesAdded: uploadedFiles.length,
+      };
+    }
+
+    // Create a clean response object without circular references
+    const cleanQuery = {
+      _id: query._id,
+      queryId: query.queryId,
+      projectId: query.projectId,
+      queryTitle: query.queryTitle,
+      queryDescription: query.queryDescription,
+      queryCategory: query.queryCategory,
+      priority: query.priority,
+      status: query.status,
+      raisedBy: query.raisedBy,
+      assignedTo: query.assignedTo,
+      raisedDate: query.raisedDate,
+      expectedResolutionDate: query.expectedResolutionDate,
+      actualResolutionDate: query.actualResolutionDate,
+      queryResponse: query.queryResponse,
+      internalRemarks: query.internalRemarks,
+      escalationLevel: query.escalationLevel,
+      attachments: query.attachments,
+      isActive: query.isActive,
+      createdAt: query.createdAt,
+      updatedAt: query.updatedAt,
+    };
+
+    // Enhanced response with file information
+    const responseData = {
+      query: cleanQuery,
+      changes,
+      projectInfo: {
+        projectId: project.projectId,
+        nameOfWork: project.nameOfWork,
+      },
+    };
+
+    // Add file upload summary if files were uploaded
+    if (uploadedFiles && uploadedFiles.length > 0) {
+      responseData.fileUploadSummary = {
+        totalFilesUploaded: uploadedFiles.length,
+        totalAttachments: query.attachments.length,
+        uploadedFiles: uploadedFiles.map((file) => ({
+          fileName: file.fileName,
+          originalName: file.originalName,
+          fileSize: file.fileSize,
+          fileType: file.fileType,
+        })),
+      };
+    }
 
     // Success response
     res.status(200).json({
       success: true,
-      message: "Query updated successfully",
-      data: {
-        query: project.queries[queryIndex],
-        changes,
-        projectInfo: {
-          projectId: project.projectId,
-          nameOfWork: project.nameOfWork,
-        },
-      },
+      message: "Archive query updated successfully",
+      data: responseData,
       metadata: {
         updatedAt: new Date().toISOString(),
         updatedBy: {
@@ -600,11 +639,16 @@ export const updateQuery = async (req, res) => {
           userName: user.name || user.username,
           userDesignation: user.designation,
         },
+        filesProcessed: uploadedFiles ? uploadedFiles.length : 0,
       },
     });
   } catch (error) {
-    await session.abortTransaction();
-    console.error("Error updating query:", error);
+    // Ensure transaction is only aborted once
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+
+    console.error("Error updating archive query:", error);
 
     // Handle specific errors
     const errorHandlers = {
@@ -642,10 +686,25 @@ export const updateQuery = async (req, res) => {
       return errorHandler();
     }
 
+    // Handle mongoose validation errors
+    if (error.name === "ValidationError") {
+      const validationErrors = Object.values(error.errors).map((err) => ({
+        field: err.path,
+        message: err.message,
+        value: err.value,
+      }));
+
+      return res.status(400).json({
+        success: false,
+        message: "Validation error occurred",
+        errors: validationErrors,
+      });
+    }
+
     // Generic server error
     res.status(500).json({
       success: false,
-      message: "Internal server error occurred while updating query",
+      message: "Internal server error occurred while updating archive query",
       error:
         process.env.NODE_ENV === "development"
           ? {
@@ -656,13 +715,16 @@ export const updateQuery = async (req, res) => {
           : undefined,
     });
   } finally {
-    session.endSession();
+    // Ensure session is properly ended
+    if (session) {
+      await session.endSession();
+    }
   }
 };
 
 /**
  * Delete (soft delete) a query
- * DELETE /api/queries/:queryId
+ * DELETE /api/archive-project/queries/:queryId
  */
 export const deleteQuery = async (req, res) => {
   const session = await mongoose.startSession();
@@ -702,12 +764,12 @@ export const deleteQuery = async (req, res) => {
 
     // Log successful deletion
     console.log(
-      `Query soft deleted successfully: ${queryId} by user: ${user.id}`
+      `Archive query soft deleted successfully: ${queryId} by user: ${user.id}`
     );
 
     res.status(200).json({
       success: true,
-      message: "Query deleted successfully",
+      message: "Archive query deleted successfully",
       data: {
         queryId,
         deletedAt: new Date().toISOString(),
@@ -722,7 +784,7 @@ export const deleteQuery = async (req, res) => {
     });
   } catch (error) {
     await session.abortTransaction();
-    console.error("Error deleting query:", error);
+    console.error("Error deleting archive query:", error);
 
     // Handle specific errors
     const errorHandlers = {
@@ -753,7 +815,7 @@ export const deleteQuery = async (req, res) => {
     // Generic server error
     res.status(500).json({
       success: false,
-      message: "Internal server error occurred while deleting query",
+      message: "Internal server error occurred while deleting archive query",
       error:
         process.env.NODE_ENV === "development"
           ? {
@@ -770,7 +832,7 @@ export const deleteQuery = async (req, res) => {
 
 /**
  * Escalate a query
- * PUT /api/queries/:queryId/escalate
+ * PUT /api/archive-project/queries/:queryId/escalate
  */
 export const escalateQuery = async (req, res) => {
   const session = await mongoose.startSession();
@@ -833,12 +895,12 @@ export const escalateQuery = async (req, res) => {
 
     // Log successful escalation
     console.log(
-      `Query escalated successfully: ${queryId} (Level ${previousEscalationLevel} -> ${query.escalationLevel}) by user: ${user.id}`
+      `Archive query escalated successfully: ${queryId} (Level ${previousEscalationLevel} -> ${query.escalationLevel}) by user: ${user.id}`
     );
 
     res.status(200).json({
       success: true,
-      message: `Query escalated to level ${query.escalationLevel}`,
+      message: `Archive query escalated to level ${query.escalationLevel}`,
       data: {
         query: query,
         escalation: {
@@ -858,7 +920,7 @@ export const escalateQuery = async (req, res) => {
     });
   } catch (error) {
     await session.abortTransaction();
-    console.error("Error escalating query:", error);
+    console.error("Error escalating archive query:", error);
 
     // Handle specific errors
     const errorHandlers = {
@@ -909,7 +971,7 @@ export const escalateQuery = async (req, res) => {
     // Generic server error
     res.status(500).json({
       success: false,
-      message: "Internal server error occurred while escalating query",
+      message: "Internal server error occurred while escalating archive query",
       error:
         process.env.NODE_ENV === "development"
           ? {
@@ -925,8 +987,8 @@ export const escalateQuery = async (req, res) => {
 };
 
 /**
- * Get query statistics across projects
- * GET /api/queries/statistics
+ * Get query statistics across archive projects
+ * GET /api/archive-project/queries/statistics
  */
 export const getQueryStatistics = async (req, res) => {
   try {
@@ -1214,7 +1276,7 @@ export const getQueryStatistics = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "Query statistics retrieved successfully",
+      message: "Archive query statistics retrieved successfully",
       data: {
         overview: {
           totalQueries: result.totalQueries,
@@ -1243,18 +1305,18 @@ export const getQueryStatistics = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Error retrieving query statistics:", error);
+    console.error("Error retrieving archive query statistics:", error);
     res.status(500).json({
       success: false,
       message:
-        "Internal server error occurred while retrieving query statistics",
+        "Internal server error occurred while retrieving archive query statistics",
     });
   }
 };
 
 /**
- * Search queries across all projects
- * GET /api/queries/search
+ * Search queries across all archive projects
+ * GET /api/archive-project/queries/search
  */
 export const searchQueries = async (req, res) => {
   try {
@@ -1318,6 +1380,7 @@ export const searchQueries = async (req, res) => {
             nameOfWork: "$nameOfWork",
             concernedEngineer: "$concernedEngineer",
             location: "$location",
+            financialYear: "$financialYear",
           },
         },
       },
@@ -1356,7 +1419,7 @@ export const searchQueries = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: `Found ${total} queries matching "${searchTerm}"`,
+      message: `Found ${total} archive queries matching "${searchTerm}"`,
       data: {
         queries: enrichedResults,
         searchTerm: searchTerm.trim(),
@@ -1378,10 +1441,10 @@ export const searchQueries = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Error searching queries:", error);
+    console.error("Error searching archive queries:", error);
     res.status(500).json({
       success: false,
-      message: "Internal server error occurred while searching queries",
+      message: "Internal server error occurred while searching archive queries",
     });
   }
 };
