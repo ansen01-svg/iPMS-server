@@ -18,7 +18,6 @@ export const createQuery = async (req, res) => {
       queryCategory,
       priority = "Medium",
       expectedResolutionDate,
-      assignedTo,
     } = req.body;
     const user = req.user;
 
@@ -72,7 +71,7 @@ export const createQuery = async (req, res) => {
       priority,
       status: "Open",
       raisedBy: user.name || user.username,
-      assignedTo: assignedTo?.trim() || "",
+      assignedTo: project.createdBy.name,
       raisedDate: new Date(),
       expectedResolutionDate: expectedDate,
       escalationLevel: 0,
@@ -460,6 +459,10 @@ export const getQueryById = async (req, res) => {
  * Update a query
  * PUT /api/projects/queries/:queryId
  */
+/**
+ * Update a query with file upload support
+ * PUT /api/projects/queries/:queryId
+ */
 export const updateQuery = async (req, res) => {
   const session = await mongoose.startSession();
 
@@ -467,18 +470,10 @@ export const updateQuery = async (req, res) => {
     await session.startTransaction();
 
     const { queryId } = req.params;
-    const {
-      queryTitle,
-      queryDescription,
-      queryCategory,
-      priority,
-      status,
-      assignedTo,
-      expectedResolutionDate,
-      queryResponse,
-      internalRemarks,
-    } = req.body;
+    // FIXED: Only destructure the fields that are actually sent from frontend
+    const { status, queryResponse } = req.body;
     const user = req.user;
+    const uploadedFiles = req.queryFiles || []; // Files from middleware
 
     // Check user authorization
     if (!user || user.designation !== "JE") {
@@ -502,21 +497,39 @@ export const updateQuery = async (req, res) => {
 
     // Store previous values for response
     const previousStatus = query.status;
-    const previousAssignedTo = query.assignedTo;
+    const previousAttachmentCount = query.attachments
+      ? query.attachments.length
+      : 0;
 
-    // Update fields if provided
-    if (queryTitle !== undefined) query.queryTitle = queryTitle.trim();
-    if (queryDescription !== undefined)
-      query.queryDescription = queryDescription.trim();
-    if (queryCategory !== undefined) query.queryCategory = queryCategory;
-    if (priority !== undefined) query.priority = priority;
-    if (assignedTo !== undefined) query.assignedTo = assignedTo.trim();
-    if (expectedResolutionDate !== undefined) {
-      const expectedDate = new Date(expectedResolutionDate);
-      if (expectedDate <= new Date()) {
-        throw new Error("INVALID_EXPECTED_DATE");
+    // Handle file attachments
+    if (uploadedFiles && uploadedFiles.length > 0) {
+      const attachmentsToAdd = uploadedFiles.map((file) => ({
+        fileName: file.fileName,
+        originalName: file.originalName,
+        downloadURL: file.downloadURL,
+        filePath: file.filePath,
+        fileSize: file.fileSize,
+        mimeType: file.mimeType,
+        fileType: file.fileType,
+        uploadedAt: new Date(),
+        uploadedBy: {
+          userId: user.id,
+          userName: user.name || user.username,
+          userDesignation: user.designation,
+        },
+      }));
+
+      // Initialize attachments array if it doesn't exist
+      if (!query.attachments) {
+        query.attachments = [];
       }
-      query.expectedResolutionDate = expectedDate;
+
+      // Add new attachments
+      query.attachments.push(...attachmentsToAdd);
+
+      console.log(
+        `Added ${attachmentsToAdd.length} file attachments to query ${queryId}`
+      );
     }
 
     // Handle status updates
@@ -530,30 +543,20 @@ export const updateQuery = async (req, res) => {
       ) {
         query.actualResolutionDate = new Date();
       }
-
-      // Set to In Progress if assigning to someone
-      if (assignedTo && status === "Open") {
-        query.status = "In Progress";
-      }
     }
 
     // Handle query response
-    if (queryResponse !== undefined) {
+    if (queryResponse !== undefined && queryResponse.trim() !== "") {
       query.queryResponse = queryResponse.trim();
+      // Auto-resolve when response is added
       if (query.status === "Open" || query.status === "In Progress") {
         query.status = "Resolved";
         query.actualResolutionDate = new Date();
       }
     }
 
-    // Handle internal remarks (append with timestamp)
-    if (internalRemarks !== undefined && internalRemarks.trim()) {
-      const timestamp = new Date().toISOString();
-      const newRemark = `[${timestamp}] ${internalRemarks.trim()}`;
-      query.internalRemarks = query.internalRemarks
-        ? `${query.internalRemarks}\n${newRemark}`
-        : newRemark;
-    }
+    // FIXED: Mark the queries array as modified to avoid circular reference issues
+    project.markModified("queries");
 
     // Save the project
     await project.save({ session });
@@ -566,23 +569,71 @@ export const updateQuery = async (req, res) => {
 
     // Prepare change summary
     const changes = {};
-    if (status && status !== previousStatus)
+    if (status && status !== previousStatus) {
       changes.status = { from: previousStatus, to: status };
-    if (assignedTo && assignedTo !== previousAssignedTo)
-      changes.assignedTo = { from: previousAssignedTo, to: assignedTo };
+    }
+    // FIXED: Remove the assignedTo reference since it's not being sent from frontend
+    if (uploadedFiles && uploadedFiles.length > 0) {
+      changes.attachments = {
+        from: previousAttachmentCount,
+        to: query.attachments.length,
+        filesAdded: uploadedFiles.length,
+      };
+    }
+
+    // FIXED: Create a clean response object without circular references
+    const cleanQuery = {
+      _id: query._id,
+      queryId: query.queryId,
+      projectId: query.projectId,
+      queryTitle: query.queryTitle,
+      queryDescription: query.queryDescription,
+      queryCategory: query.queryCategory,
+      priority: query.priority,
+      status: query.status,
+      raisedBy: query.raisedBy,
+      assignedTo: query.assignedTo,
+      raisedDate: query.raisedDate,
+      expectedResolutionDate: query.expectedResolutionDate,
+      actualResolutionDate: query.actualResolutionDate,
+      queryResponse: query.queryResponse,
+      internalRemarks: query.internalRemarks,
+      escalationLevel: query.escalationLevel,
+      attachments: query.attachments,
+      isActive: query.isActive,
+      createdAt: query.createdAt,
+      updatedAt: query.updatedAt,
+    };
+
+    // Enhanced response with file information
+    const responseData = {
+      query: cleanQuery,
+      changes,
+      projectInfo: {
+        projectId: project.projectId,
+        projectName: project.projectName,
+      },
+    };
+
+    // Add file upload summary if files were uploaded
+    if (uploadedFiles && uploadedFiles.length > 0) {
+      responseData.fileUploadSummary = {
+        totalFilesUploaded: uploadedFiles.length,
+        totalAttachments: query.attachments.length,
+        uploadedFiles: uploadedFiles.map((file) => ({
+          fileName: file.fileName,
+          originalName: file.originalName,
+          fileSize: file.fileSize,
+          fileType: file.fileType,
+        })),
+      };
+    }
 
     // Success response
     res.status(200).json({
       success: true,
       message: "Query updated successfully",
-      data: {
-        query: project.queries[queryIndex],
-        changes,
-        projectInfo: {
-          projectId: project.projectId,
-          projectName: project.projectName,
-        },
-      },
+      data: responseData,
       metadata: {
         updatedAt: new Date().toISOString(),
         updatedBy: {
@@ -590,10 +641,15 @@ export const updateQuery = async (req, res) => {
           userName: user.name || user.username,
           userDesignation: user.designation,
         },
+        filesProcessed: uploadedFiles ? uploadedFiles.length : 0,
       },
     });
   } catch (error) {
-    await session.abortTransaction();
+    // FIXED: Ensure transaction is only aborted once
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+
     console.error("Error updating query:", error);
 
     // Handle specific errors
@@ -632,6 +688,21 @@ export const updateQuery = async (req, res) => {
       return errorHandler();
     }
 
+    // Handle mongoose validation errors
+    if (error.name === "ValidationError") {
+      const validationErrors = Object.values(error.errors).map((err) => ({
+        field: err.path,
+        message: err.message,
+        value: err.value,
+      }));
+
+      return res.status(400).json({
+        success: false,
+        message: "Validation error occurred",
+        errors: validationErrors,
+      });
+    }
+
     // Generic server error
     res.status(500).json({
       success: false,
@@ -646,7 +717,10 @@ export const updateQuery = async (req, res) => {
           : undefined,
     });
   } finally {
-    session.endSession();
+    // FIXED: Ensure session is properly ended
+    if (session) {
+      await session.endSession();
+    }
   }
 };
 
