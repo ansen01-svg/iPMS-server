@@ -31,6 +31,8 @@ import {
   updateQuery,
 } from "../controller/archive-project.js/query.js";
 
+import { getArchiveProjectDocuments } from "../controller/archive-project.js/get-documents.js";
+
 // Authentication middleware
 import { requireJe, requireLogin } from "../middlewares/auth.middleware.js";
 import { createFileUploadMiddleware } from "../middlewares/project-files-upload.middleware.js";
@@ -88,6 +90,9 @@ router.get("/:id", requireLogin(), getArchiveProjectByProjectId);
 
 // Get project timeline/history
 router.get("/:id/timeline", requireLogin(), getArchiveProjectTimeline);
+
+// Get project timeline/history
+router.get("/:projectId/documents", getArchiveProjectDocuments);
 
 // ==========================================
 // UPDATED PROGRESS ROUTES (Now using Firebase)
