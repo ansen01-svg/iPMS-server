@@ -10,6 +10,7 @@ import {
   getPDFGenerationOptions,
 } from "../controller/project/generate-pdf.js";
 import getAllProjects from "../controller/project/get-all-projects.js";
+import { getProjectDocuments } from "../controller/project/get-documents.js";
 import getProjectDropdownOptions from "../controller/project/get-dropdown-options.js";
 import {
   getProjectById,
@@ -126,6 +127,9 @@ router.get("/dropdown-options", getProjectDropdownOptions);
 
 // Get single project by ID with enhanced details
 router.get("/:projectId", requireLogin(), getProjectById);
+
+// Get project documents
+router.get("/:projectId/documents", getProjectDocuments);
 
 // Get project timeline/history
 router.get("/:id/timeline", requireLogin(), getProjectTimeline);
