@@ -91,7 +91,9 @@ export const updateFinancialProgress = async (req, res) => {
 
     // Validate bill details if completing financially
     if (newFinancialProgress === 100) {
-      if (!billDetails || !billDetails.billNumber) {
+      const billObject = JSON.parse(billDetails);
+
+      if (!billObject || !billObject.billNumber) {
         throw new Error("FINAL_BILL_DETAILS_REQUIRED");
       }
     }

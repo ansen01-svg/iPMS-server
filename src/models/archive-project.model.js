@@ -637,11 +637,11 @@ archiveProjectSchema.pre("save", function (next) {
     this.workValue &&
     this.billSubmittedAmount > this.workValue
   ) {
-    next(new Error("Bill submitted amount cannot exceed work value"));
+    return next(new Error("Bill submitted amount cannot exceed work value")); // ✅ Added return
   }
 
   if (this.AADated > new Date()) {
-    next(new Error("A.A date cannot be in the future"));
+    return next(new Error("A.A date cannot be in the future")); // ✅ Added return
   }
 
   // Auto-calculate financial progress based on bill amount
@@ -651,7 +651,7 @@ archiveProjectSchema.pre("save", function (next) {
     );
   }
 
-  next();
+  next(); // ✅ Only called if no errors above
 });
 
 // Static methods
@@ -913,7 +913,7 @@ raisedQuerySchema.pre("save", function (next) {
 
   // Ensure expected resolution date is not in the past (only for new queries)
   if (this.isNew && this.expectedResolutionDate < new Date()) {
-    next(new Error("Expected resolution date cannot be in the past"));
+    return next(new Error("Expected resolution date cannot be in the past")); // ✅ Added return
   }
 
   // Auto-escalate if query is overdue and still open
@@ -925,7 +925,7 @@ raisedQuerySchema.pre("save", function (next) {
     this.escalationLevel += 1;
   }
 
-  next();
+  next(); // ✅ Only called if no errors above
 });
 
 // Static Methods for CRUD operations
