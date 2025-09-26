@@ -110,6 +110,45 @@ export const updateProjectProgress = async (req, res) => {
     // Add progress update using the model method
     await project.addProgressUpdate(updateData, userInfo);
 
+    // NEW: Auto-change status to "Completed" when progress reaches 100%
+    let statusChanged = false;
+    let statusChangeMessage = "";
+
+    if (progressNum === 100 && project.status === "Ongoing") {
+      try {
+        const statusUserInfo = {
+          userId: user.id,
+          name: user.name || user.username,
+          role: user.designation,
+          ipAddress: req.ip || req.connection.remoteAddress,
+          userAgent: req.get("User-Agent") || "",
+        };
+
+        await project.changeStatus(
+          "Completed",
+          statusUserInfo,
+          "Project automatically marked as completed due to 100% progress achievement"
+        );
+
+        statusChanged = true;
+        statusChangeMessage =
+          "Project status automatically changed to 'Completed'";
+
+        console.log(
+          `Project ${id} status automatically changed to 'Completed' by user: ${user.id}`
+        );
+      } catch (statusError) {
+        // Log the error but don't fail the progress update
+        console.error(
+          `Failed to auto-change project status to Completed for project ${id}:`,
+          statusError.message
+        );
+        statusChangeMessage = `Progress updated to 100%, but status change failed: ${statusError.message}`;
+      }
+    } else if (progressNum === 100 && project.status !== "Ongoing") {
+      statusChangeMessage = `Progress reached 100%, but project status is '${project.status}' instead of 'Ongoing'. Manual status change may be required.`;
+    }
+
     // Get updated project with populated virtual fields
     const enrichedProject = await Project.findById(id).session(session).lean();
 
@@ -155,8 +194,8 @@ export const updateProjectProgress = async (req, res) => {
       `Project progress updated successfully for project ${id}: ${currentProgress}% -> ${progressNum}% by user: ${user.id}`
     );
 
-    // Success response
-    res.status(200).json({
+    // Success response with status change information
+    const response = {
       success: true,
       message: "Project progress updated successfully",
       data: {
@@ -184,6 +223,13 @@ export const updateProjectProgress = async (req, res) => {
             return acc;
           }, {}),
         },
+        // NEW: Status change information
+        statusChange: {
+          occurred: statusChanged,
+          message: statusChangeMessage,
+          newStatus: statusChanged ? "Completed" : enrichedProject.status,
+          previousStatus: statusChanged ? "Ongoing" : enrichedProject.status,
+        },
       },
       metadata: {
         updatedAt: new Date().toISOString(),
@@ -196,15 +242,25 @@ export const updateProjectProgress = async (req, res) => {
                 (1000 * 60 * 60 * 24)
             )
           : null,
+        // NEW: Completion information
+        isCompleted: progressNum === 100,
+        completedAt: statusChanged ? new Date().toISOString() : null,
       },
-    });
+    };
+
+    // Add status change message to main message if applicable
+    if (statusChangeMessage) {
+      response.message += `. ${statusChangeMessage}`;
+    }
+
+    res.status(200).json(response);
   } catch (error) {
     // Rollback transaction
     await session.abortTransaction();
 
     console.error("Error updating project progress:", error);
 
-    // Handle specific errors
+    // Handle specific errors (keeping existing error handlers)
     const errorHandlers = {
       INVALID_PROJECT_ID: () =>
         res.status(400).json({
