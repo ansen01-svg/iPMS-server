@@ -22,6 +22,27 @@ const editProject = async (req, res) => {
       });
     }
 
+    // Check ownership - JE can only edit their own projects
+    if (existingProject.createdBy.userId !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only edit projects created by you",
+      });
+    }
+
+    // Check if project is editable
+    if (!existingProject.isProjectEditable) {
+      return res.status(403).json({
+        success: false,
+        message: "This project is currently locked and cannot be edited",
+        details: {
+          currentStatus: existingProject.status,
+          suggestion:
+            "Please contact your supervisor if you believe this is an error",
+        },
+      });
+    }
+
     // Check if project can be edited based on status
     const nonEditableStatuses = ["Completed"];
     if (nonEditableStatuses.includes(existingProject.status)) {
@@ -397,6 +418,29 @@ const editProject = async (req, res) => {
     updateObject.$push = {
       statusHistory: statusHistoryEntry,
     };
+
+    // Create editable status history entry
+    const editableStatusHistoryEntry = {
+      previousStatus: existingProject.isProjectEditable || false,
+      newStatus: false,
+      changedBy: {
+        userId: req.user.userId,
+        name: req.user.fullName || req.user.username,
+        role: req.user.designation,
+      },
+      reason:
+        "Automatic: Project edited and resubmitted for approval, locking for review",
+      changedAt: new Date(),
+    };
+
+    // Update isProjectEditable and add to history
+    updateObject.isProjectEditable = false;
+
+    // Add to editableStatusHistory array
+    if (!updateObject.$push) {
+      updateObject.$push = {};
+    }
+    updateObject.$push.editableStatusHistory = editableStatusHistoryEntry;
 
     // Update status workflow
     updateObject["statusWorkflow.submittedAt"] = new Date();
