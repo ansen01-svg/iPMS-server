@@ -94,7 +94,6 @@ const raisedQuerySchema = new mongoose.Schema(
     queryId: {
       type: String,
       required: [true, "Query ID is required"],
-      unique: true,
       index: true,
     },
     projectId: {
@@ -752,7 +751,7 @@ const projectSchema = new mongoose.Schema(
       },
     },
 
-    // ENHANCED: Progress and Financial Tracking
+    // Progress and Financial Tracking
     // Physical/Work Progress
     progressPercentage: {
       type: Number,
@@ -862,6 +861,48 @@ const projectSchema = new mongoose.Schema(
         default: Date.now,
       },
     },
+
+    // Project editability control
+    isProjectEditable: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    editableStatusHistory: [
+      {
+        previousStatus: {
+          type: Boolean,
+          required: true,
+        },
+        newStatus: {
+          type: Boolean,
+          required: true,
+        },
+        changedBy: {
+          userId: {
+            type: String,
+            required: true,
+          },
+          name: {
+            type: String,
+            required: true,
+          },
+          role: {
+            type: String,
+            required: true,
+          },
+        },
+        reason: {
+          type: String,
+          trim: true,
+          maxlength: [500, "Reason cannot exceed 500 characters"],
+        },
+        changedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
 
     // Queries related to the project
     queries: [raisedQuerySchema],
@@ -980,6 +1021,20 @@ projectSchema.virtual("progressSummary").get(function () {
       amountSubmitted: this.billSubmittedAmount,
       amountRemaining: this.remainingBudget,
     },
+  };
+});
+
+projectSchema.virtual("editableStatusInfo").get(function () {
+  const latestHistory =
+    this.editableStatusHistory && this.editableStatusHistory.length > 0
+      ? this.editableStatusHistory[this.editableStatusHistory.length - 1]
+      : null;
+
+  return {
+    isEditable: this.isProjectEditable,
+    lastChangedAt: latestHistory ? latestHistory.changedAt : null,
+    lastChangedBy: latestHistory ? latestHistory.changedBy : null,
+    lastChangeReason: latestHistory ? latestHistory.reason : null,
   };
 });
 
@@ -1271,6 +1326,96 @@ projectSchema.statics.getSubFundsForMainFund = function (mainFundName) {
   return mainFund ? mainFund.subFunds : [];
 };
 
+// Method to change project editable status
+projectSchema.methods.changeEditableStatus = function (
+  newStatus,
+  userInfo,
+  reason = ""
+) {
+  // Validate that only certain roles can change this
+  const allowedRoles = ["ADMIN", "SUPERADMIN"];
+  if (!allowedRoles.includes(userInfo.role)) {
+    throw new Error(
+      `Only ${allowedRoles.join(", ")} can change project editable status`
+    );
+  }
+
+  const previousStatus = this.isProjectEditable;
+
+  // Create history entry
+  const historyEntry = {
+    previousStatus,
+    newStatus,
+    changedBy: {
+      userId: userInfo.userId,
+      name: userInfo.name,
+      role: userInfo.role,
+    },
+    reason: reason.trim(),
+    changedAt: new Date(),
+  };
+
+  // Update status and history
+  this.isProjectEditable = newStatus;
+  this.editableStatusHistory.push(historyEntry);
+
+  // Update lastModifiedBy
+  this.lastModifiedBy = {
+    userId: userInfo.userId,
+    name: userInfo.name,
+    role: userInfo.role,
+    modifiedAt: new Date(),
+  };
+
+  return this.save();
+};
+
+// Helper method to automatically update editable status based on project status
+projectSchema.methods.autoUpdateEditableStatus = function (
+  newProjectStatus,
+  userInfo,
+  reason = ""
+) {
+  const previousEditableStatus = this.isProjectEditable;
+  let newEditableStatus = previousEditableStatus;
+
+  // Determine new editable status based on project status
+  if (newProjectStatus.includes("Rejected")) {
+    // Allow editing when rejected so JE can make corrections
+    newEditableStatus = true;
+    reason =
+      reason || `Automatic: Project rejected, enabling edits for corrections`;
+  } else if (
+    newProjectStatus === "Resubmitted for Approval" ||
+    newProjectStatus === "Ongoing" ||
+    newProjectStatus === "Completed"
+  ) {
+    // Lock project when resubmitted, approved, or completed
+    newEditableStatus = false;
+    reason =
+      reason ||
+      `Automatic: Project status changed to ${newProjectStatus}, locking edits`;
+  }
+
+  // Only update if status actually changes
+  if (newEditableStatus !== previousEditableStatus) {
+    const historyEntry = {
+      previousStatus: previousEditableStatus,
+      newStatus: newEditableStatus,
+      changedBy: {
+        userId: userInfo.userId,
+        name: userInfo.name,
+        role: userInfo.role,
+      },
+      reason: reason.trim(),
+      changedAt: new Date(),
+    };
+
+    this.isProjectEditable = newEditableStatus;
+    this.editableStatusHistory.push(historyEntry);
+  }
+};
+
 // Method to change project status
 projectSchema.methods.changeStatus = function (
   newStatus,
@@ -1312,6 +1457,19 @@ projectSchema.methods.changeStatus = function (
 
   // Update workflow timestamps
   this.updateStatusWorkflow(newStatus, userInfo);
+
+  // AUTOMATIC: Update editable status based on project status
+  // - Rejected → Editable (JE can make corrections)
+  // - Resubmitted/Ongoing/Completed → Not editable (locked)
+  this.autoUpdateEditableStatus(
+    newStatus,
+    userInfo,
+    newStatus.includes("Rejected")
+      ? `Project rejected: ${
+          rejectionReason || remarks || "Requires corrections"
+        }`
+      : `Project status changed to: ${newStatus}`
+  );
 
   return this.save();
 };

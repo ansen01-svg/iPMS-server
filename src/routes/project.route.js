@@ -49,8 +49,17 @@ import {
   updateProjectStatus,
 } from "../controller/project/update-status.js";
 
+import {
+  getEditableStatusHistory,
+  updateEditableStatus,
+} from "../controller/project/update-editable-status.js";
+
 // Authentication middleware
-import { requireJe, requireLogin } from "../middlewares/auth.middleware.js";
+import {
+  requireAdmin,
+  requireJe,
+  requireLogin,
+} from "../middlewares/auth.middleware.js";
 
 // File upload middleware
 import { createFileUploadMiddleware } from "../middlewares/project-files-upload.middleware.js";
@@ -130,6 +139,20 @@ router.get("/:projectId", requireLogin(), getProjectById);
 
 // Get project documents
 router.get("/:projectId/documents", getProjectDocuments);
+
+// Route to update project editable status
+router.patch(
+  "/:projectId/editable-status",
+  requireAdmin(),
+  updateEditableStatus
+);
+
+// Route to get editable status history
+router.get(
+  "/:projectId/editable-status/history",
+  requireAdmin(),
+  getEditableStatusHistory
+);
 
 // Get project timeline/history
 router.get("/:id/timeline", requireLogin(), getProjectTimeline);

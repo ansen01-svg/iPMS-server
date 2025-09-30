@@ -1,5 +1,3 @@
-// src/controller/project/project-status.js
-
 import mongoose from "mongoose";
 import Project from "../../models/project.model.js";
 
