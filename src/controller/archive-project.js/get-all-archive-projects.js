@@ -2,6 +2,10 @@ import ArchiveProject from "../../models/archive-project.model.js";
 
 const getAllArchiveProjects = async (req, res) => {
   try {
+    // Extract user information for role-based filtering
+    const user = req.user;
+    const userRole = user.designation;
+
     // Pagination parameters
     const page = parseInt(req.query.page) || 1;
     const limit = Math.min(parseInt(req.query.limit) || 5, 10);
@@ -196,6 +200,31 @@ const getAllArchiveProjects = async (req, res) => {
 
     if (req.query.AANumber) {
       filter.AANumber = req.query.AANumber;
+    }
+
+    // Role-based filtering - Apply AFTER all query param filters
+    switch (userRole) {
+      case "JE":
+        // JE can only see projects where they are the concerned engineer
+        // This overrides any concernedEngineer filter from query params for security
+        filter.concernedEngineer = {
+          $in: [user.fullName, user.username].filter(Boolean),
+        };
+        break;
+
+      case "AEE":
+      case "CE":
+      case "MD":
+      case "VIEWER":
+      case "ADMIN":
+        // These roles can see all archive projects (respecting other filters)
+        break;
+
+      default:
+        return res.status(403).json({
+          success: false,
+          message: `Invalid user role: ${userRole}. Access denied.`,
+        });
     }
 
     // Build the query
@@ -438,6 +467,7 @@ const getAllArchiveProjects = async (req, res) => {
         sortBy,
         sortOrder: sortOrder === 1 ? "asc" : "desc",
       },
+      userRole, // Include user role in response for debugging
     });
   } catch (error) {
     console.error("Error retrieving archive projects:", error);
