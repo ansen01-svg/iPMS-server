@@ -7,10 +7,11 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import * as dotenv from "dotenv";
 import express from "express";
+import rateLimit from "express-rate-limit";
 // import mongoSanitize from "express-mongo-sanitize";
+// import xss from "xss-clean";
 import helmet from "helmet";
 import morgan from "morgan";
-// import xss from "xss-clean";
 
 // Custom middleware and utilities
 import { AppError, errorController } from "./utils/errorHandler.js";
@@ -70,12 +71,13 @@ process.on("unhandledRejection", (err) => {
 
 // Security and request parsing
 app.use(cors(corsOptions));
-// app.use(
-//   rateLimit({
-//     windowMs: 15 * 60 * 1000,
-//     limit: 60,
-//   })
-// );
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 100, // Limit each IP to 100 requests per windowMs
+    message: "Too many requests from this IP, please try again later.",
+  })
+);
 app.use(helmet()); // Set security HTTP headers
 app.use(morgan("tiny")); // API logging for development
 
@@ -85,7 +87,7 @@ app.use(cookieParser());
 // Body parsers
 app.use(
   express.json({
-    limit: "100mb",
+    limit: "10mb",
     strict: true,
     type: "application/json",
   })
@@ -105,11 +107,7 @@ app.use(express.static("./public"));
 // ----------------------------------------
 // 5. ROUTES
 // ----------------------------------------
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// // Root route
+// Root route
 app.get("/", (req, res) => {
   res.send("iPMS API is running");
 });
