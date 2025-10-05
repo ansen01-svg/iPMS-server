@@ -21,7 +21,7 @@ const createArchiveProject = async (req, res) => {
     } = req.body;
 
     const user = req.user;
-    if (!user || user.designation !== "JE") {
+    if (!user || user.designation !== "OPERATOR") {
       return res.status(401).json({
         success: false,
         message: "Unauthorized user",

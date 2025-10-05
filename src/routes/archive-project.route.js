@@ -34,7 +34,11 @@ import {
 import { getArchiveProjectDocuments } from "../controller/archive-project.js/get-documents.js";
 
 // Authentication middleware
-import { requireJe, requireLogin } from "../middlewares/auth.middleware.js";
+import {
+  requireJe,
+  requireLogin,
+  requireOperator,
+} from "../middlewares/auth.middleware.js";
 import { createFileUploadMiddleware } from "../middlewares/project-files-upload.middleware.js";
 
 // Validation middleware
@@ -76,8 +80,8 @@ const router = express.Router();
 // Get all archive projects with filtering, pagination, and search
 router.get("/", requireLogin(), getAllArchiveProjects);
 
-// Create new archive project (JE only)
-router.post("/", requireJe(), createArchiveProject);
+// Create new archive project (OPERATOR only)
+router.post("/", requireOperator(), createArchiveProject);
 
 // Get filter options for frontend dropdowns
 router.get("/filter-options", requireLogin(), getFilterOptions);

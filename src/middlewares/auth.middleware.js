@@ -62,7 +62,8 @@ const requireAuth = (allowedRoles = []) => {
 
 // Convenience functions
 const requireLogin = () => requireAuth();
+const requireOperator = () => requireAuth(["OPERATOR"]);
 const requireJe = () => requireAuth(["JE"]);
 const requireAdmin = () => requireAuth(["ADMIN", "SUPER_ADMIN"]);
 
-export { requireAdmin, requireJe, requireLogin };
+export { requireAdmin, requireJe, requireLogin, requireOperator };

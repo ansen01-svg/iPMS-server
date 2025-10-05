@@ -217,6 +217,7 @@ const getAllArchiveProjects = async (req, res) => {
       case "MD":
       case "VIEWER":
       case "ADMIN":
+      case "OPERATOR":
         // These roles can see all archive projects (respecting other filters)
         break;
 

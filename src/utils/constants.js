@@ -1,5 +1,13 @@
 // User constants
-export const userRoles = ["JE", "AEE", "CE", "MD", "VIEWER", "ADMIN"];
+export const userRoles = [
+  "JE",
+  "AEE",
+  "CE",
+  "MD",
+  "VIEWER",
+  "ADMIN",
+  "OPERATOR",
+];
 
 // Project constants
 export const projectStatus = [
