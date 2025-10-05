@@ -1,10 +1,13 @@
 import MeasurementBook from "../../models/mb.model.js";
 
-// Update measurement book
+/**
+ * Update a measurement book's basic information
+ * Does not update measurements array - use separate endpoints for that
+ */
 const updateMeasurementBook = async (req, res) => {
   try {
-    const { mbId } = req.params;
-    const { description, remarks } = req.body;
+    const { id } = req.params;
+    const updateData = req.body;
 
     // Check if user is authenticated
     if (!req.user) {
@@ -14,18 +17,43 @@ const updateMeasurementBook = async (req, res) => {
       });
     }
 
-    const measurementBook = await MeasurementBook.findById(mbId);
+    // Find the measurement book
+    let measurementBook = await MeasurementBook.findOne({
+      mbId: id.toUpperCase(),
+    });
+
+    if (!measurementBook) {
+      measurementBook = await MeasurementBook.findById(id);
+    }
 
     if (!measurementBook) {
       return res.status(404).json({
         success: false,
-        message: "Measurement book not found",
+        message: `Measurement Book with ID '${id}' not found`,
       });
     }
 
-    // Update fields
-    if (description) measurementBook.description = description.trim();
-    if (remarks !== undefined) measurementBook.remarks = remarks?.trim();
+    // Fields that can be updated
+    const allowedUpdates = [
+      "mbNo",
+      "nameOfWork",
+      "location",
+      "contractor",
+      "tenderAgreement",
+      "aaOrFsNo",
+      "aaOrFsDate",
+      "slNoOfBill",
+      "dateOfCommencement",
+      "dateOfCompletion",
+      "dateOfMeasurement",
+    ];
+
+    // Apply updates
+    allowedUpdates.forEach((field) => {
+      if (updateData[field] !== undefined) {
+        measurementBook[field] = updateData[field];
+      }
+    });
 
     // Update lastModifiedBy
     measurementBook.lastModifiedBy = {
@@ -35,17 +63,22 @@ const updateMeasurementBook = async (req, res) => {
       modifiedAt: new Date(),
     };
 
-    const updatedMB = await measurementBook.save();
-
-    // Populate project details for response
-    const populatedMB = await MeasurementBook.findById(updatedMB._id).populate(
-      "project"
-    );
+    // Save the updated measurement book
+    await measurementBook.save();
 
     res.status(200).json({
       success: true,
-      message: "Measurement book updated successfully",
-      data: populatedMB,
+      message: "Measurement Book updated successfully",
+      data: {
+        measurementBook: {
+          mbId: measurementBook.mbId,
+          mbNo: measurementBook.mbNo,
+          nameOfWork: measurementBook.nameOfWork,
+          location: measurementBook.location,
+          contractor: measurementBook.contractor,
+          lastModifiedBy: measurementBook.lastModifiedBy,
+        },
+      },
     });
   } catch (error) {
     console.error("Error updating measurement book:", error);
@@ -64,7 +97,7 @@ const updateMeasurementBook = async (req, res) => {
     if (error.name === "CastError") {
       return res.status(400).json({
         success: false,
-        message: "Invalid measurement book ID format",
+        message: "Invalid data format",
       });
     }
 

@@ -2,15 +2,14 @@ import mongoose from "mongoose";
 
 const measurementBookSchema = new mongoose.Schema(
   {
+    // Project reference
     project: {
       type: mongoose.Schema.Types.ObjectId,
       required: [true, "Project reference is required"],
       index: true,
-      // Dynamic reference - will be populated based on projectType
       refPath: "projectType",
     },
 
-    // New field to indicate which model the project belongs to
     projectType: {
       type: String,
       required: [true, "Project type is required"],
@@ -18,50 +17,137 @@ const measurementBookSchema = new mongoose.Schema(
       index: true,
     },
 
-    description: {
+    // Unique MB identifier
+    mbId: {
       type: String,
-      required: [true, "MB description is required"],
+      required: [true, "MB ID is required"],
       trim: true,
-      minlength: [10, "Description must be at least 10 characters"],
-      maxlength: [1000, "Description cannot exceed 1000 characters"],
+      uppercase: true,
     },
 
-    // File upload details
-    uploadedFile: {
-      fileName: {
-        type: String,
-        required: true,
-      },
-      originalName: {
-        type: String,
-        required: true,
-      },
-      downloadURL: {
-        type: String,
-        required: true,
-      },
-      filePath: {
-        type: String,
-        required: true, // Firebase storage path for deletion
-      },
-      fileSize: {
-        type: Number,
-        required: true,
-      },
-      mimeType: {
-        type: String,
-        required: true,
-      },
-      fileType: {
-        type: String,
-        enum: ["document", "image"],
-        required: true,
-      },
-      uploadedAt: {
-        type: Date,
-        default: Date.now,
-      },
+    // MB Details
+    mbNo: {
+      type: String,
+      required: [true, "MB Number is required"],
+      trim: true,
     },
+
+    nameOfWork: {
+      type: String,
+      required: [true, "Name of Work is required"],
+      trim: true,
+      minlength: [5, "Name of Work must be at least 5 characters"],
+      maxlength: [500, "Name of Work cannot exceed 500 characters"],
+    },
+
+    location: {
+      type: String,
+      required: [true, "Location is required"],
+      trim: true,
+      maxlength: [200, "Location cannot exceed 200 characters"],
+    },
+
+    contractor: {
+      type: String,
+      required: [true, "Contractor name is required"],
+      trim: true,
+      maxlength: [200, "Contractor name cannot exceed 200 characters"],
+    },
+
+    tenderAgreement: {
+      type: String,
+      trim: true,
+      maxlength: [200, "Tender Agreement cannot exceed 200 characters"],
+    },
+
+    aaOrFsNo: {
+      type: String,
+      trim: true,
+      maxlength: [100, "A.A. or F.S. No. cannot exceed 100 characters"],
+    },
+
+    aaOrFsDate: {
+      type: Date,
+    },
+
+    slNoOfBill: {
+      type: String,
+      trim: true,
+      maxlength: [50, "SL No. of Bill cannot exceed 50 characters"],
+    },
+
+    dateOfCommencement: {
+      type: Date,
+      required: [true, "Date of Commencement is required"],
+    },
+
+    dateOfCompletion: {
+      type: Date,
+      required: [true, "Date of Completion is required"],
+    },
+
+    dateOfMeasurement: {
+      type: Date,
+      required: [true, "Date of Measurement is required"],
+    },
+
+    // Measurements array - each measurement item with its own file
+    measurements: [
+      {
+        id: {
+          type: String,
+          required: true,
+        },
+        description: {
+          type: String,
+          required: [true, "Item description is required"],
+          trim: true,
+          minlength: [5, "Item description must be at least 5 characters"],
+          maxlength: [1000, "Item description cannot exceed 1000 characters"],
+        },
+        unit: {
+          type: String,
+          required: [true, "Unit is required"],
+          trim: true,
+          maxlength: [50, "Unit cannot exceed 50 characters"],
+        },
+        uploadedFile: {
+          fileName: {
+            type: String,
+            required: true,
+          },
+          originalName: {
+            type: String,
+            required: true,
+          },
+          downloadURL: {
+            type: String,
+            required: true,
+          },
+          filePath: {
+            type: String,
+            required: true,
+          },
+          fileSize: {
+            type: Number,
+            required: true,
+          },
+          mimeType: {
+            type: String,
+            required: true,
+          },
+          fileType: {
+            type: String,
+            enum: ["document", "image"],
+            required: true,
+          },
+          uploadedAt: {
+            type: Date,
+            default: Date.now,
+          },
+        },
+      },
+    ],
 
     // Creator and modifier info
     createdBy: {
@@ -91,26 +177,6 @@ const measurementBookSchema = new mongoose.Schema(
         default: Date.now,
       },
     },
-
-    // Remarks and additional info
-    remarks: {
-      type: String,
-      trim: true,
-      maxlength: [500, "Remarks cannot exceed 500 characters"],
-    },
-
-    approvedBy: {
-      userId: String,
-      name: String,
-      role: String,
-      approvedAt: Date,
-    },
-
-    rejectionReason: {
-      type: String,
-      trim: true,
-      maxlength: [500, "Rejection reason cannot exceed 500 characters"],
-    },
   },
   {
     timestamps: true,
@@ -119,31 +185,39 @@ const measurementBookSchema = new mongoose.Schema(
   }
 );
 
-// Updated indexes for better performance
+// Indexes for better performance
 measurementBookSchema.index({ project: 1, projectType: 1, createdAt: -1 });
 measurementBookSchema.index({ project: 1, projectType: 1 });
 measurementBookSchema.index({ projectType: 1, createdAt: -1 });
 measurementBookSchema.index({ "createdBy.userId": 1, projectType: 1 });
+measurementBookSchema.index({ mbId: 1 }, { unique: true });
+measurementBookSchema.index({ mbNo: 1 });
 
 // Text index for search functionality
 measurementBookSchema.index({
-  description: "text",
-  remarks: "text",
+  nameOfWork: "text",
+  location: "text",
+  contractor: "text",
+  "measurements.description": "text",
 });
 
-// Virtual for file URL
-measurementBookSchema.virtual("fileUrl").get(function () {
-  if (this.uploadedFile && this.uploadedFile.filePath) {
-    return `/api/files/${this.uploadedFile.fileName}`;
-  }
-  return null;
+// Virtual for total measurements count
+measurementBookSchema.virtual("totalMeasurements").get(function () {
+  return this.measurements ? this.measurements.length : 0;
 });
 
-// Virtual for human-readable file size
-measurementBookSchema.virtual("humanReadableFileSize").get(function () {
-  if (!this.uploadedFile || !this.uploadedFile.fileSize) return "0 B";
+// Virtual for total file size
+measurementBookSchema.virtual("totalFileSize").get(function () {
+  if (!this.measurements || this.measurements.length === 0) return 0;
 
-  const bytes = this.uploadedFile.fileSize;
+  return this.measurements.reduce((total, measurement) => {
+    return total + (measurement.uploadedFile?.fileSize || 0);
+  }, 0);
+});
+
+// Virtual for human-readable total file size
+measurementBookSchema.virtual("humanReadableTotalFileSize").get(function () {
+  const bytes = this.totalFileSize;
   const sizes = ["B", "KB", "MB", "GB"];
   if (bytes === 0) return "0 B";
 
@@ -159,9 +233,30 @@ measurementBookSchema.pre("save", function (next) {
   next();
 });
 
+// Static method to generate unique MB ID
+measurementBookSchema.statics.generateMBId = async function () {
+  const prefix = "MB";
+  let isUnique = false;
+  let mbId;
+
+  while (!isUnique) {
+    // Generate random number between 100 and 999999
+    const randomNum = Math.floor(Math.random() * 899900) + 100;
+    mbId = `${prefix}_${randomNum}`;
+
+    // Check if this ID already exists
+    const existing = await this.findOne({ mbId });
+    if (!existing) {
+      isUnique = true;
+    }
+  }
+
+  return mbId;
+};
+
 // Static methods
 measurementBookSchema.statics.findByProject = function (
-  projectObjectId, // MongoDB ObjectId, not projectId string
+  projectObjectId,
   projectType,
   options = {}
 ) {
@@ -198,25 +293,27 @@ measurementBookSchema.statics.createMultiple = async function (
   return await this.insertMany(mbDataArray, options);
 };
 
-// Instance methods
-measurementBookSchema.methods.approve = function (approverInfo) {
-  this.approvedBy = {
-    userId: approverInfo.userId,
-    name: approverInfo.name,
-    role: approverInfo.role,
-    approvedAt: new Date(),
-  };
+// Instance method to add measurement
+measurementBookSchema.methods.addMeasurement = function (measurementData) {
+  this.measurements.push(measurementData);
   return this.save();
 };
 
-measurementBookSchema.methods.reject = function (rejectorInfo, reason) {
-  this.rejectionReason = reason;
-  this.lastModifiedBy = {
-    userId: rejectorInfo.userId,
-    name: rejectorInfo.name,
-    role: rejectorInfo.role,
-    modifiedAt: new Date(),
-  };
+// Instance method to remove measurement
+measurementBookSchema.methods.removeMeasurement = function (measurementId) {
+  this.measurements = this.measurements.filter((m) => m.id !== measurementId);
+  return this.save();
+};
+
+// Instance method to update measurement
+measurementBookSchema.methods.updateMeasurement = function (
+  measurementId,
+  updateData
+) {
+  const measurement = this.measurements.find((m) => m.id === measurementId);
+  if (measurement) {
+    Object.assign(measurement, updateData);
+  }
   return this.save();
 };
 

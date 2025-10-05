@@ -6,7 +6,6 @@ export const validateMBData = (req, res, next) => {
   try {
     const { measurementBooks } = req.body;
 
-    // Check if measurementBooks exists and is an array
     if (!measurementBooks) {
       return res.status(400).json({
         success: false,
@@ -28,7 +27,6 @@ export const validateMBData = (req, res, next) => {
       });
     }
 
-    // Validate array length (prevent too many items in one request)
     if (measurementBooks.length > 50) {
       return res.status(400).json({
         success: false,
@@ -42,7 +40,7 @@ export const validateMBData = (req, res, next) => {
     measurementBooks.forEach((mb, index) => {
       const mbNumber = index + 1;
 
-      // Validate project ID (now expecting projectId string, not ObjectId)
+      // Validate project ID
       if (!mb.project) {
         errors.push(`MB ${mbNumber}: project field is required`);
       } else if (typeof mb.project !== "string") {
@@ -53,89 +51,206 @@ export const validateMBData = (req, res, next) => {
         errors.push(`MB ${mbNumber}: project ID cannot exceed 50 characters`);
       }
 
-      // Validate description
-      if (!mb.description) {
-        errors.push(`MB ${mbNumber}: description field is required`);
-      } else if (typeof mb.description !== "string") {
-        errors.push(`MB ${mbNumber}: description must be a string`);
-      } else if (mb.description.trim().length < 10) {
+      // Validate MB No
+      if (!mb.mbNo) {
+        errors.push(`MB ${mbNumber}: mbNo field is required`);
+      } else if (typeof mb.mbNo !== "string") {
+        errors.push(`MB ${mbNumber}: mbNo must be a string`);
+      } else if (mb.mbNo.trim().length === 0) {
+        errors.push(`MB ${mbNumber}: mbNo cannot be empty`);
+      }
+
+      // Validate Name of Work
+      if (!mb.nameOfWork) {
+        errors.push(`MB ${mbNumber}: nameOfWork field is required`);
+      } else if (typeof mb.nameOfWork !== "string") {
+        errors.push(`MB ${mbNumber}: nameOfWork must be a string`);
+      } else if (mb.nameOfWork.trim().length < 5) {
+        errors.push(`MB ${mbNumber}: nameOfWork must be at least 5 characters`);
+      } else if (mb.nameOfWork.trim().length > 500) {
+        errors.push(`MB ${mbNumber}: nameOfWork cannot exceed 500 characters`);
+      }
+
+      // Validate Location
+      if (!mb.location) {
+        errors.push(`MB ${mbNumber}: location field is required`);
+      } else if (typeof mb.location !== "string") {
+        errors.push(`MB ${mbNumber}: location must be a string`);
+      } else if (mb.location.trim().length === 0) {
+        errors.push(`MB ${mbNumber}: location cannot be empty`);
+      } else if (mb.location.trim().length > 200) {
+        errors.push(`MB ${mbNumber}: location cannot exceed 200 characters`);
+      }
+
+      // Validate Contractor
+      if (!mb.contractor) {
+        errors.push(`MB ${mbNumber}: contractor field is required`);
+      } else if (typeof mb.contractor !== "string") {
+        errors.push(`MB ${mbNumber}: contractor must be a string`);
+      } else if (mb.contractor.trim().length === 0) {
+        errors.push(`MB ${mbNumber}: contractor cannot be empty`);
+      } else if (mb.contractor.trim().length > 200) {
+        errors.push(`MB ${mbNumber}: contractor cannot exceed 200 characters`);
+      }
+
+      // Validate optional fields
+      if (mb.tenderAgreement && mb.tenderAgreement.trim().length > 200) {
         errors.push(
-          `MB ${mbNumber}: description must be at least 10 characters`
-        );
-      } else if (mb.description.trim().length > 1000) {
-        errors.push(
-          `MB ${mbNumber}: description cannot exceed 1000 characters`
+          `MB ${mbNumber}: tenderAgreement cannot exceed 200 characters`
         );
       }
 
-      // Validate remarks (optional)
-      if (mb.remarks && typeof mb.remarks !== "string") {
-        errors.push(`MB ${mbNumber}: remarks must be a string`);
-      } else if (mb.remarks && mb.remarks.trim().length > 500) {
-        errors.push(`MB ${mbNumber}: remarks cannot exceed 500 characters`);
+      if (mb.aaOrFsNo && mb.aaOrFsNo.trim().length > 100) {
+        errors.push(`MB ${mbNumber}: aaOrFsNo cannot exceed 100 characters`);
       }
 
-      // Validate uploaded file (should be set by file upload middleware)
-      if (!mb.uploadedFile) {
+      if (mb.slNoOfBill && mb.slNoOfBill.trim().length > 50) {
+        errors.push(`MB ${mbNumber}: slNoOfBill cannot exceed 50 characters`);
+      }
+
+      // Validate dates
+      if (!mb.dateOfCommencement) {
+        errors.push(`MB ${mbNumber}: dateOfCommencement is required`);
+      } else if (isNaN(Date.parse(mb.dateOfCommencement))) {
+        errors.push(`MB ${mbNumber}: dateOfCommencement must be a valid date`);
+      }
+
+      if (!mb.dateOfCompletion) {
+        errors.push(`MB ${mbNumber}: dateOfCompletion is required`);
+      } else if (isNaN(Date.parse(mb.dateOfCompletion))) {
+        errors.push(`MB ${mbNumber}: dateOfCompletion must be a valid date`);
+      }
+
+      if (!mb.dateOfMeasurement) {
+        errors.push(`MB ${mbNumber}: dateOfMeasurement is required`);
+      } else if (isNaN(Date.parse(mb.dateOfMeasurement))) {
+        errors.push(`MB ${mbNumber}: dateOfMeasurement must be a valid date`);
+      }
+
+      // Validate date logic
+      if (
+        mb.dateOfCommencement &&
+        mb.dateOfCompletion &&
+        new Date(mb.dateOfCommencement) > new Date(mb.dateOfCompletion)
+      ) {
         errors.push(
-          `MB ${mbNumber}: uploadedFile field is required (file upload middleware should have set this)`
+          `MB ${mbNumber}: dateOfCommencement cannot be after dateOfCompletion`
+        );
+      }
+
+      if (mb.aaOrFsDate && isNaN(Date.parse(mb.aaOrFsDate))) {
+        errors.push(`MB ${mbNumber}: aaOrFsDate must be a valid date`);
+      }
+
+      // Validate measurements array
+      if (!mb.measurements) {
+        errors.push(`MB ${mbNumber}: measurements field is required`);
+      } else if (!Array.isArray(mb.measurements)) {
+        errors.push(`MB ${mbNumber}: measurements must be an array`);
+      } else if (mb.measurements.length === 0) {
+        errors.push(`MB ${mbNumber}: measurements array cannot be empty`);
+      } else if (mb.measurements.length > 100) {
+        errors.push(
+          `MB ${mbNumber}: cannot have more than 100 measurement items`
         );
       } else {
-        const file = mb.uploadedFile;
+        // Validate each measurement item
+        mb.measurements.forEach((measurement, mIndex) => {
+          const measurementNumber = mIndex + 1;
 
-        // Validate file properties set by middleware
-        const requiredFileFields = [
-          "fileName",
-          "originalName",
-          "downloadURL",
-          "filePath",
-          "fileSize",
-          "mimeType",
-          "fileType",
-        ];
+          if (!measurement.id) {
+            errors.push(
+              `MB ${mbNumber}, Measurement ${measurementNumber}: id is required`
+            );
+          }
 
-        requiredFileFields.forEach((field) => {
-          if (!file[field]) {
-            errors.push(`MB ${mbNumber}: uploadedFile.${field} is required`);
+          if (!measurement.description) {
+            errors.push(
+              `MB ${mbNumber}, Measurement ${measurementNumber}: description is required`
+            );
+          } else if (typeof measurement.description !== "string") {
+            errors.push(
+              `MB ${mbNumber}, Measurement ${measurementNumber}: description must be a string`
+            );
+          } else if (measurement.description.trim().length < 5) {
+            errors.push(
+              `MB ${mbNumber}, Measurement ${measurementNumber}: description must be at least 5 characters`
+            );
+          } else if (measurement.description.trim().length > 1000) {
+            errors.push(
+              `MB ${mbNumber}, Measurement ${measurementNumber}: description cannot exceed 1000 characters`
+            );
+          }
+
+          if (!measurement.unit) {
+            errors.push(
+              `MB ${mbNumber}, Measurement ${measurementNumber}: unit is required`
+            );
+          } else if (typeof measurement.unit !== "string") {
+            errors.push(
+              `MB ${mbNumber}, Measurement ${measurementNumber}: unit must be a string`
+            );
+          } else if (measurement.unit.trim().length > 50) {
+            errors.push(
+              `MB ${mbNumber}, Measurement ${measurementNumber}: unit cannot exceed 50 characters`
+            );
+          }
+
+          // Validate uploaded file
+          if (!measurement.uploadedFile) {
+            errors.push(
+              `MB ${mbNumber}, Measurement ${measurementNumber}: uploadedFile is required`
+            );
+          } else {
+            const file = measurement.uploadedFile;
+            const requiredFileFields = [
+              "fileName",
+              "originalName",
+              "downloadURL",
+              "filePath",
+              "fileSize",
+              "mimeType",
+              "fileType",
+            ];
+
+            requiredFileFields.forEach((field) => {
+              if (!file[field]) {
+                errors.push(
+                  `MB ${mbNumber}, Measurement ${measurementNumber}: uploadedFile.${field} is required`
+                );
+              }
+            });
+
+            if (file.fileSize && file.fileSize > 10 * 1024 * 1024) {
+              errors.push(
+                `MB ${mbNumber}, Measurement ${measurementNumber}: file size cannot exceed 10MB`
+              );
+            }
+
+            const allowedMimeTypes = [
+              "application/pdf",
+              "image/jpeg",
+              "image/jpg",
+              "image/png",
+              "image/webp",
+            ];
+
+            if (file.mimeType && !allowedMimeTypes.includes(file.mimeType)) {
+              errors.push(
+                `MB ${mbNumber}, Measurement ${measurementNumber}: invalid file type`
+              );
+            }
+
+            if (
+              file.fileType &&
+              !["document", "image"].includes(file.fileType)
+            ) {
+              errors.push(
+                `MB ${mbNumber}, Measurement ${measurementNumber}: fileType must be 'document' or 'image'`
+              );
+            }
           }
         });
-
-        // Validate file size
-        if (
-          file.fileSize &&
-          (typeof file.fileSize !== "number" || file.fileSize <= 0)
-        ) {
-          errors.push(
-            `MB ${mbNumber}: uploadedFile.fileSize must be a positive number`
-          );
-        }
-
-        // Validate file type
-        if (file.fileType && !["document", "image"].includes(file.fileType)) {
-          errors.push(
-            `MB ${mbNumber}: uploadedFile.fileType must be either 'document' or 'image'`
-          );
-        }
-
-        // Validate file size limit (10MB)
-        if (file.fileSize && file.fileSize > 10 * 1024 * 1024) {
-          errors.push(`MB ${mbNumber}: file size cannot exceed 10MB`);
-        }
-
-        // Validate allowed MIME types
-        const allowedMimeTypes = [
-          "application/pdf",
-          "image/jpeg",
-          "image/jpg",
-          "image/png",
-          "image/webp",
-        ];
-
-        if (file.mimeType && !allowedMimeTypes.includes(file.mimeType)) {
-          errors.push(
-            `MB ${mbNumber}: invalid file type. Only PDF and image files are allowed`
-          );
-        }
       }
     });
 
@@ -150,7 +265,6 @@ export const validateMBData = (req, res, next) => {
       });
     }
 
-    // If validation passes, continue to the next middleware/controller
     next();
   } catch (error) {
     console.error("Error in MB validation middleware:", error);
@@ -170,23 +284,32 @@ export const sanitizeMBData = (req, res, next) => {
   try {
     const { measurementBooks } = req.body;
 
-    // Sanitize each measurement book
     const sanitizedMBs = measurementBooks.map((mb) => ({
       ...mb,
       project: mb.project?.toString().trim(),
-      description: mb.description?.trim(),
-      remarks: mb.remarks?.trim() || undefined,
-      uploadedFile: mb.uploadedFile
-        ? {
-            ...mb.uploadedFile,
-            fileName: mb.uploadedFile.fileName?.trim(),
-            originalName: mb.uploadedFile.originalName?.trim(),
-            downloadURL: mb.uploadedFile.downloadURL?.trim(),
-            filePath: mb.uploadedFile.filePath?.trim(),
-            mimeType: mb.uploadedFile.mimeType?.trim().toLowerCase(),
-            fileType: mb.uploadedFile.fileType?.trim().toLowerCase(),
-          }
-        : mb.uploadedFile,
+      mbNo: mb.mbNo?.trim(),
+      nameOfWork: mb.nameOfWork?.trim(),
+      location: mb.location?.trim(),
+      contractor: mb.contractor?.trim(),
+      tenderAgreement: mb.tenderAgreement?.trim() || undefined,
+      aaOrFsNo: mb.aaOrFsNo?.trim() || undefined,
+      slNoOfBill: mb.slNoOfBill?.trim() || undefined,
+      measurements: mb.measurements?.map((measurement) => ({
+        ...measurement,
+        description: measurement.description?.trim(),
+        unit: measurement.unit?.trim(),
+        uploadedFile: measurement.uploadedFile
+          ? {
+              ...measurement.uploadedFile,
+              fileName: measurement.uploadedFile.fileName?.trim(),
+              originalName: measurement.uploadedFile.originalName?.trim(),
+              downloadURL: measurement.uploadedFile.downloadURL?.trim(),
+              filePath: measurement.uploadedFile.filePath?.trim(),
+              mimeType: measurement.uploadedFile.mimeType?.trim().toLowerCase(),
+              fileType: measurement.uploadedFile.fileType?.trim().toLowerCase(),
+            }
+          : measurement.uploadedFile,
+      })),
     }));
 
     req.body.measurementBooks = sanitizedMBs;
@@ -203,8 +326,7 @@ export const sanitizeMBData = (req, res, next) => {
 };
 
 /**
- * Middleware to validate project IDs exist in database using projectId strings
- * This runs after basic validation but before actual creation
+ * Middleware to validate project IDs exist in database
  */
 export const validateProjectsExist = async (req, res, next) => {
   try {
@@ -213,14 +335,11 @@ export const validateProjectsExist = async (req, res, next) => {
       "../utils/project-utils.js"
     );
 
-    // Extract unique project IDs (projectId strings)
     const projectIds = [
       ...new Set(measurementBooks.map((mb) => mb.project.trim())),
     ];
 
-    // Validate all project IDs at once
     const projectValidation = await findMultipleProjectsByProjectId(projectIds);
-
     const invalidProjects = projectValidation.filter((p) => !p.found);
 
     if (invalidProjects.length > 0) {
@@ -240,7 +359,6 @@ export const validateProjectsExist = async (req, res, next) => {
       });
     }
 
-    // Attach project validation results to request for use in controller
     req.projectValidation = projectValidation;
     next();
   } catch (error) {
@@ -255,92 +373,94 @@ export const validateProjectsExist = async (req, res, next) => {
 };
 
 /**
- * Middleware to check user permissions for projects
- * Add this if you need project-level permissions
- */
-export const validateProjectPermissions = async (req, res, next) => {
-  try {
-    const { measurementBooks } = req.body;
-    const user = req.user;
-
-    // Extract unique project IDs
-    const projectIds = [...new Set(measurementBooks.map((mb) => mb.project))];
-
-    // Here you would implement your permission logic
-    // For example, check if user has permission to create MBs for these projects
-
-    // Placeholder implementation - customize based on your permission system
-    const unauthorizedProjects = [];
-
-    // Example permission check (customize based on your system):
-    /*
-    for (const projectId of projectIds) {
-      const hasPermission = await checkUserProjectPermission(user.userId, projectId, 'CREATE_MB');
-      if (!hasPermission) {
-        unauthorizedProjects.push(projectId);
-      }
-    }
-    */
-
-    if (unauthorizedProjects.length > 0) {
-      return res.status(403).json({
-        success: false,
-        message: "Insufficient permissions for some projects",
-        unauthorizedProjects,
-        details:
-          "You don't have permission to create measurement books for these projects",
-      });
-    }
-
-    next();
-  } catch (error) {
-    console.error("Error validating project permissions:", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error during permission validation",
-      details:
-        process.env.NODE_ENV === "development" ? error.message : undefined,
-    });
-  }
-};
-
-/**
  * Complete validation pipeline for MB creation
  */
 export const completeMBValidation = [
-  validateMBData, // Basic data structure validation
-  sanitizeMBData, // Clean and sanitize data
-  validateProjectsExist, // Check projects exist in database
-  // validateProjectPermissions, // Uncomment if you need permission checks
+  validateMBData,
+  sanitizeMBData,
+  validateProjectsExist,
 ];
 
 /**
- * Lightweight validation for update operations (no file validation)
+ * Lightweight validation for update operations
  */
 export const validateMBUpdateData = (req, res, next) => {
   try {
-    const { description, remarks } = req.body;
+    const {
+      mbNo,
+      nameOfWork,
+      location,
+      contractor,
+      tenderAgreement,
+      aaOrFsNo,
+      slNoOfBill,
+      dateOfCommencement,
+      dateOfCompletion,
+      dateOfMeasurement,
+      aaOrFsDate,
+    } = req.body;
 
     const errors = [];
 
-    // Validate description if provided
-    if (description !== undefined) {
-      if (typeof description !== "string") {
-        errors.push("description must be a string");
-      } else if (description.trim().length < 10) {
-        errors.push("description must be at least 10 characters");
-      } else if (description.trim().length > 1000) {
-        errors.push("description cannot exceed 1000 characters");
+    // Validate optional field updates
+    if (mbNo !== undefined && typeof mbNo !== "string") {
+      errors.push("mbNo must be a string");
+    }
+
+    if (nameOfWork !== undefined) {
+      if (typeof nameOfWork !== "string") {
+        errors.push("nameOfWork must be a string");
+      } else if (nameOfWork.trim().length < 5) {
+        errors.push("nameOfWork must be at least 5 characters");
+      } else if (nameOfWork.trim().length > 500) {
+        errors.push("nameOfWork cannot exceed 500 characters");
       }
     }
 
-    // Validate remarks if provided
-    if (remarks !== undefined && remarks !== null) {
-      if (typeof remarks !== "string") {
-        errors.push("remarks must be a string");
-      } else if (remarks.trim().length > 500) {
-        errors.push("remarks cannot exceed 500 characters");
+    if (location !== undefined) {
+      if (typeof location !== "string") {
+        errors.push("location must be a string");
+      } else if (location.trim().length > 200) {
+        errors.push("location cannot exceed 200 characters");
       }
+    }
+
+    if (contractor !== undefined) {
+      if (typeof contractor !== "string") {
+        errors.push("contractor must be a string");
+      } else if (contractor.trim().length > 200) {
+        errors.push("contractor cannot exceed 200 characters");
+      }
+    }
+
+    if (tenderAgreement !== undefined && tenderAgreement.trim().length > 200) {
+      errors.push("tenderAgreement cannot exceed 200 characters");
+    }
+
+    if (
+      dateOfCommencement !== undefined &&
+      isNaN(Date.parse(dateOfCommencement))
+    ) {
+      errors.push("dateOfCommencement must be a valid date");
+    }
+
+    if (dateOfCompletion !== undefined && isNaN(Date.parse(dateOfCompletion))) {
+      errors.push("dateOfCompletion must be a valid date");
+    }
+
+    if (
+      dateOfMeasurement !== undefined &&
+      isNaN(Date.parse(dateOfMeasurement))
+    ) {
+      errors.push("dateOfMeasurement must be a valid date");
+    }
+
+    if (
+      aaOrFsDate !== undefined &&
+      aaOrFsDate !== null &&
+      isNaN(Date.parse(aaOrFsDate))
+    ) {
+      errors.push("aaOrFsDate must be a valid date");
     }
 
     if (errors.length > 0) {
@@ -352,13 +472,17 @@ export const validateMBUpdateData = (req, res, next) => {
     }
 
     // Sanitize data
-    if (description !== undefined) {
-      req.body.description = description.trim();
-    }
-    if (remarks !== undefined) {
-      req.body.remarks = remarks ? remarks.trim() : remarks;
-    }
+    const sanitizedData = {};
+    if (mbNo !== undefined) sanitizedData.mbNo = mbNo.trim();
+    if (nameOfWork !== undefined) sanitizedData.nameOfWork = nameOfWork.trim();
+    if (location !== undefined) sanitizedData.location = location.trim();
+    if (contractor !== undefined) sanitizedData.contractor = contractor.trim();
+    if (tenderAgreement !== undefined)
+      sanitizedData.tenderAgreement = tenderAgreement.trim();
+    if (aaOrFsNo !== undefined) sanitizedData.aaOrFsNo = aaOrFsNo.trim();
+    if (slNoOfBill !== undefined) sanitizedData.slNoOfBill = slNoOfBill.trim();
 
+    req.body = sanitizedData;
     next();
   } catch (error) {
     console.error("Error in MB update validation middleware:", error);

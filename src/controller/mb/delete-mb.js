@@ -1,9 +1,12 @@
 import MeasurementBook from "../../models/mb.model.js";
+import { deleteMultipleFilesFromFirebase } from "../../utils/firebase.js";
 
-// Delete measurement book (soft delete)
+/**
+ * Delete a measurement book and all its associated files
+ */
 const deleteMeasurementBook = async (req, res) => {
   try {
-    const { mbId } = req.params;
+    const { id } = req.params;
 
     // Check if user is authenticated
     if (!req.user) {
@@ -13,21 +16,49 @@ const deleteMeasurementBook = async (req, res) => {
       });
     }
 
-    const measurementBook = await MeasurementBook.findById(mbId);
+    // Find the measurement book
+    let measurementBook = await MeasurementBook.findOne({
+      mbId: id.toUpperCase(),
+    });
+
+    if (!measurementBook) {
+      measurementBook = await MeasurementBook.findById(id);
+    }
 
     if (!measurementBook) {
       return res.status(404).json({
         success: false,
-        message: "Measurement book not found",
+        message: `Measurement Book with ID '${id}' not found`,
       });
     }
 
-    // For now, we'll do hard delete. You can implement soft delete by adding an 'isActive' field
-    await MeasurementBook.findByIdAndDelete(mbId);
+    // Collect all file paths for deletion
+    const filePaths = measurementBook.measurements.map(
+      (measurement) => measurement.uploadedFile.filePath
+    );
+
+    // Delete the measurement book from database
+    await MeasurementBook.findByIdAndDelete(measurementBook._id);
+
+    // Delete all associated files from Firebase
+    if (filePaths.length > 0) {
+      try {
+        await deleteMultipleFilesFromFirebase(filePaths);
+        console.log(`Deleted ${filePaths.length} files from Firebase`);
+      } catch (fileError) {
+        console.error("Error deleting files from Firebase:", fileError);
+        // Continue even if file deletion fails
+      }
+    }
 
     res.status(200).json({
       success: true,
-      message: "Measurement book deleted successfully",
+      message: "Measurement Book deleted successfully",
+      data: {
+        mbId: measurementBook.mbId,
+        mbNo: measurementBook.mbNo,
+        deletedFiles: filePaths.length,
+      },
     });
   } catch (error) {
     console.error("Error deleting measurement book:", error);
