@@ -4,6 +4,9 @@ import {
   getUnifiedProjectFields,
 } from "../../utils/projects-filter.js";
 
+/**
+ * Get all measurement books for a specific project
+ */
 const getMeasurementBooksByProject = async (req, res) => {
   try {
     const { projectId } = req.params;
@@ -12,23 +15,25 @@ const getMeasurementBooksByProject = async (req, res) => {
       limit = 10,
       sortBy = "createdAt",
       sortOrder = -1,
+      mbId,
+      mbNo,
+      contractor,
     } = req.query;
 
-    // Parse and validate sortOrder - ensure it's always 1 or -1
-    let validSortOrder = -1; // default to descending
+    // Parse and validate sortOrder
+    let validSortOrder = -1;
     if (sortOrder) {
       const parsedSortOrder = parseInt(sortOrder);
       if (!isNaN(parsedSortOrder)) {
         validSortOrder = parsedSortOrder >= 0 ? 1 : -1;
       } else if (typeof sortOrder === "string") {
-        // Handle string values like 'asc', 'desc'
         validSortOrder = sortOrder.toLowerCase() === "asc" ? 1 : -1;
       }
     }
 
     // Parse and validate other numeric parameters
     const validPage = Math.max(1, parseInt(page) || 1);
-    const validLimit = Math.max(1, Math.min(100, parseInt(limit) || 10)); // Cap limit at 100
+    const validLimit = Math.max(1, Math.min(100, parseInt(limit) || 10));
 
     // Find the project in either collection using projectId string
     const projectResult = await findProjectByProjectId(projectId);
@@ -42,23 +47,40 @@ const getMeasurementBooksByProject = async (req, res) => {
 
     const { project, projectType } = projectResult;
 
-    // Get measurement books for this project (using MongoDB ObjectId for efficient query)
-    const measurementBooks = await MeasurementBook.findByProject(
-      project._id, // Use MongoDB ObjectId for database query
-      projectType,
-      {
-        page: validPage,
-        limit: validLimit,
-        sortBy,
-        sortOrder: validSortOrder, // Use validated sort order
-      }
-    );
+    // Build additional query filters
+    const additionalFilters = {};
+    if (mbId) {
+      additionalFilters.mbId = mbId.toUpperCase();
+    }
+    if (mbNo) {
+      additionalFilters.mbNo = { $regex: mbNo, $options: "i" };
+    }
+    if (contractor) {
+      additionalFilters.contractor = { $regex: contractor, $options: "i" };
+    }
 
-    const totalCount = await MeasurementBook.countByProject(
-      project._id,
-      projectType
-    );
+    // Get measurement books for this project
+    const skip = (validPage - 1) * validLimit;
+    const query = {
+      project: project._id,
+      projectType,
+      ...additionalFilters,
+    };
+
+    const measurementBooks = await MeasurementBook.find(query)
+      .populate("project")
+      .sort({ [sortBy]: validSortOrder })
+      .skip(skip)
+      .limit(validLimit)
+      .lean();
+
+    const totalCount = await MeasurementBook.countDocuments(query);
     const totalPages = Math.ceil(totalCount / validLimit);
+
+    // Calculate total measurements for this project
+    const totalMeasurements = measurementBooks.reduce((sum, mb) => {
+      return sum + (mb.measurements?.length || 0);
+    }, 0);
 
     // Get unified project fields
     const unifiedProject = getUnifiedProjectFields(project, projectType);
@@ -66,7 +88,10 @@ const getMeasurementBooksByProject = async (req, res) => {
     res.status(200).json({
       success: true,
       data: {
-        measurementBooks,
+        measurementBooks: measurementBooks.map((mb) => ({
+          ...mb,
+          totalMeasurements: mb.measurements?.length || 0,
+        })),
         project: unifiedProject,
         pagination: {
           currentPage: validPage,
@@ -75,6 +100,10 @@ const getMeasurementBooksByProject = async (req, res) => {
           hasNextPage: validPage < totalPages,
           hasPrevPage: validPage > 1,
           limit: validLimit,
+        },
+        summary: {
+          totalMBs: totalCount,
+          totalMeasurementItems: totalMeasurements,
         },
       },
     });

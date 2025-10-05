@@ -1,34 +1,39 @@
 import MeasurementBook from "../../models/mb.model.js";
-import { getUnifiedProjectFields } from "../../utils/projects-filter.js";
 
-// Get measurement book by ID with populated project details
-const getMeasurementBookById = async (req, res) => {
+/**
+ * Get a single measurement book by MB ID or MongoDB _id
+ */
+const getSingleMeasurementBook = async (req, res) => {
   try {
-    const { mbId } = req.params;
+    const { id } = req.params;
 
-    const measurementBook = await MeasurementBook.findById(mbId).populate(
-      "project"
-    );
+    // Try to find by mbId first (e.g., MB_123), then by MongoDB _id
+    let measurementBook = await MeasurementBook.findOne({
+      mbId: id.toUpperCase(),
+    })
+      .populate("project")
+      .lean();
+
+    if (!measurementBook) {
+      // Try to find by MongoDB _id
+      measurementBook = await MeasurementBook.findById(id)
+        .populate("project")
+        .lean();
+    }
 
     if (!measurementBook) {
       return res.status(404).json({
         success: false,
-        message: "Measurement book not found",
+        message: `Measurement Book with ID '${id}' not found`,
       });
     }
-
-    // Get unified project fields
-    const unifiedProject = getUnifiedProjectFields(
-      measurementBook.project,
-      measurementBook.projectType
-    );
 
     res.status(200).json({
       success: true,
       data: {
         measurementBook: {
-          ...measurementBook.toObject(),
-          project: unifiedProject,
+          ...measurementBook,
+          totalMeasurements: measurementBook.measurements?.length || 0,
         },
       },
     });
@@ -51,4 +56,4 @@ const getMeasurementBookById = async (req, res) => {
   }
 };
 
-export default getMeasurementBookById;
+export default getSingleMeasurementBook;

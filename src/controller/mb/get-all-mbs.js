@@ -1,6 +1,8 @@
 import MeasurementBook from "../../models/mb.model.js";
 
-// Get all measurement books with filtering and pagination
+/**
+ * Get all measurement books with filtering and pagination
+ */
 const getAllMeasurementBooks = async (req, res) => {
   try {
     const {
@@ -11,23 +13,26 @@ const getAllMeasurementBooks = async (req, res) => {
       projectType,
       search,
       createdBy,
+      mbId,
+      mbNo,
+      contractor,
+      location,
     } = req.query;
 
-    // Parse and validate sortOrder - ensure it's always 1 or -1
-    let validSortOrder = -1; // default to descending
+    // Parse and validate sortOrder
+    let validSortOrder = -1;
     if (sortOrder) {
       const parsedSortOrder = parseInt(sortOrder);
       if (!isNaN(parsedSortOrder)) {
         validSortOrder = parsedSortOrder >= 0 ? 1 : -1;
       } else if (typeof sortOrder === "string") {
-        // Handle string values like 'asc', 'desc'
         validSortOrder = sortOrder.toLowerCase() === "asc" ? 1 : -1;
       }
     }
 
     // Parse and validate other numeric parameters
     const validPage = Math.max(1, parseInt(page) || 1);
-    const validLimit = Math.max(1, Math.min(100, parseInt(limit) || 10)); // Cap limit at 100
+    const validLimit = Math.max(1, Math.min(100, parseInt(limit) || 10));
     const skip = (validPage - 1) * validLimit;
 
     // Build query
@@ -41,6 +46,22 @@ const getAllMeasurementBooks = async (req, res) => {
       query["createdBy.userId"] = createdBy;
     }
 
+    if (mbId) {
+      query.mbId = mbId.toUpperCase();
+    }
+
+    if (mbNo) {
+      query.mbNo = { $regex: mbNo, $options: "i" };
+    }
+
+    if (contractor) {
+      query.contractor = { $regex: contractor, $options: "i" };
+    }
+
+    if (location) {
+      query.location = { $regex: location, $options: "i" };
+    }
+
     if (search) {
       query.$text = { $search: search };
     }
@@ -48,9 +69,10 @@ const getAllMeasurementBooks = async (req, res) => {
     // Get measurement books with pagination
     const measurementBooks = await MeasurementBook.find(query)
       .populate("project")
-      .sort({ [sortBy]: validSortOrder }) // Use validated sort order
+      .sort({ [sortBy]: validSortOrder })
       .skip(skip)
-      .limit(validLimit);
+      .limit(validLimit)
+      .lean();
 
     const totalCount = await MeasurementBook.countDocuments(query);
     const totalPages = Math.ceil(totalCount / validLimit);
@@ -66,10 +88,18 @@ const getAllMeasurementBooks = async (req, res) => {
       },
     ]);
 
+    // Calculate total measurements across all MBs
+    const totalMeasurements = measurementBooks.reduce((sum, mb) => {
+      return sum + (mb.measurements?.length || 0);
+    }, 0);
+
     res.status(200).json({
       success: true,
       data: {
-        measurementBooks,
+        measurementBooks: measurementBooks.map((mb) => ({
+          ...mb,
+          totalMeasurements: mb.measurements?.length || 0,
+        })),
         pagination: {
           currentPage: validPage,
           totalPages,
@@ -80,6 +110,7 @@ const getAllMeasurementBooks = async (req, res) => {
         },
         summary: {
           total: totalCount,
+          totalMeasurementItems: totalMeasurements,
           byProjectType: projectTypeSummary.reduce((acc, item) => {
             acc[item._id] = item.count;
             return acc;
@@ -90,7 +121,6 @@ const getAllMeasurementBooks = async (req, res) => {
   } catch (error) {
     console.error("Error fetching all measurement books:", error);
 
-    // Handle specific MongoDB errors
     if (error.name === "CastError") {
       return res.status(400).json({
         success: false,

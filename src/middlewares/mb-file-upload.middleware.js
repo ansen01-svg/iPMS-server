@@ -5,7 +5,6 @@ import {
   validateFile,
 } from "../utils/firebase.js";
 
-// Configure multer to store files in memory for Firebase upload
 const storage = multer.memoryStorage();
 
 // File filter function for MB files
@@ -19,7 +18,6 @@ const mbFileFilter = (req, file, cb) => {
       return cb(error, false);
     }
 
-    // Specific validation for MB files - only allow PDF and images
     const allowedMimeTypes = [
       "application/pdf",
       "image/jpeg",
@@ -36,7 +34,6 @@ const mbFileFilter = (req, file, cb) => {
       return cb(error, false);
     }
 
-    // Add file category for later use
     const fileCategory = file.mimetype.startsWith("image/")
       ? "image"
       : "document";
@@ -50,108 +47,23 @@ const mbFileFilter = (req, file, cb) => {
   }
 };
 
-// Multer configuration for single MB upload
-const mbUpload = multer({
-  storage,
-  fileFilter: mbFileFilter,
-  limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB per file
-    files: 1, // Only one file allowed per MB
-  },
-});
-
-// Multer configuration for batch MB upload
+// Multer configuration for batch MB upload with multiple files per MB
 const mbBatchUpload = multer({
   storage,
   fileFilter: mbFileFilter,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB per file
-    files: 50, // Maximum 50 files for batch upload
-    fieldSize: 50 * 1024 * 1024, // 50MB total field size
+    files: 500, // Maximum 500 files (50 MBs * 10 measurements per MB average)
+    fieldSize: 100 * 1024 * 1024, // 100MB total field size
   },
 });
 
 /**
- * Middleware for uploading single MB file to Firebase Storage
- */
-export const mbFileUpload = async (req, res, next) => {
-  // Use multer to parse the single file
-  const multerMiddleware = mbUpload.single("mbFile");
-
-  multerMiddleware(req, res, async (multerError) => {
-    if (multerError) {
-      return handleMBUploadErrors(multerError, req, res, next);
-    }
-
-    try {
-      // File is required for MB creation
-      if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          message: "Measurement Book file is required",
-          details: {
-            expectedField: "mbFile",
-            allowedTypes: ["PDF", "JPEG", "JPG", "PNG", "WebP"],
-          },
-        });
-      }
-
-      // Create folder path for MB files
-      const projectId = req.body.project || "general";
-      const mbFolder = createMBFolder(projectId);
-
-      console.log(`Uploading MB file to Firebase folder: ${mbFolder}`);
-
-      // Upload file to Firebase (single file)
-      const uploadedFiles = await uploadMultipleFilesToFirebase(
-        [req.file],
-        mbFolder
-      );
-
-      if (!uploadedFiles || uploadedFiles.length === 0) {
-        throw new Error("Failed to upload file to Firebase");
-      }
-
-      const uploadedFile = uploadedFiles[0];
-
-      // Process and attach to request body for controller use
-      req.body.uploadedFile = {
-        fileName: uploadedFile.fileName,
-        originalName: uploadedFile.originalName,
-        downloadURL: uploadedFile.downloadURL,
-        filePath: uploadedFile.filePath,
-        fileSize: uploadedFile.fileSize,
-        mimeType: uploadedFile.mimeType,
-        fileType: uploadedFile.mimeType.startsWith("image/")
-          ? "image"
-          : "document",
-      };
-
-      console.log(
-        `Successfully uploaded MB file: ${uploadedFile.originalName}`
-      );
-      next();
-    } catch (error) {
-      console.error("Error uploading MB file to Firebase:", error);
-
-      return res.status(500).json({
-        success: false,
-        message: "Failed to upload measurement book file to cloud storage",
-        details: {
-          error: error.message,
-          errorCode: "FIREBASE_UPLOAD_ERROR",
-        },
-      });
-    }
-  });
-};
-
-/**
- * Middleware for uploading multiple MB files to Firebase Storage (Batch Upload)
+ * Middleware for uploading multiple MB files to Firebase Storage
+ * Handles multiple measurement books, each with multiple measurement items
  */
 export const mbBatchFileUpload = async (req, res, next) => {
-  // Use multer to parse multiple files
-  const multerMiddleware = mbBatchUpload.array("mbFiles", 50);
+  const multerMiddleware = mbBatchUpload.array("mbFiles", 500);
 
   multerMiddleware(req, res, async (multerError) => {
     if (multerError) {
@@ -176,7 +88,6 @@ export const mbBatchFileUpload = async (req, res, next) => {
         });
       }
 
-      // Validate that we have files and measurementBooks
       if (!req.files || req.files.length === 0) {
         return res.status(400).json({
           success: false,
@@ -195,53 +106,77 @@ export const mbBatchFileUpload = async (req, res, next) => {
         });
       }
 
-      // Validate that number of files matches number of measurement books
-      if (req.files.length !== measurementBooks.length) {
+      // Calculate total expected files
+      const totalExpectedFiles = measurementBooks.reduce((total, mb) => {
+        return total + (mb.measurements?.length || 0);
+      }, 0);
+
+      if (req.files.length !== totalExpectedFiles) {
         return res.status(400).json({
           success: false,
-          message: `Number of files (${req.files.length}) must match number of measurement books (${measurementBooks.length})`,
+          message: `Number of files (${req.files.length}) must match total number of measurements (${totalExpectedFiles})`,
           details: {
             filesCount: req.files.length,
-            measurementBooksCount: measurementBooks.length,
+            expectedFilesCount: totalExpectedFiles,
           },
         });
       }
 
-      console.log(`Processing ${req.files.length} MB files for batch upload`);
+      console.log(
+        `Processing ${req.files.length} files for ${measurementBooks.length} measurement book(s)`
+      );
 
-      // Group files by project for organized folder structure
-      const projectFolders = new Map();
+      // Upload all files to Firebase
       const uploadPromises = [];
+      let fileIndex = 0;
 
-      for (let i = 0; i < req.files.length; i++) {
-        const file = req.files[i];
-        const mbData = measurementBooks[i];
-        const projectId = mbData.project || "general";
+      for (let mbIndex = 0; mbIndex < measurementBooks.length; mbIndex++) {
+        const mb = measurementBooks[mbIndex];
+        const projectId = mb.project || "general";
+        const mbFolder = createMBFolder(projectId);
 
-        // Create or get folder for this project
-        if (!projectFolders.has(projectId)) {
-          projectFolders.set(projectId, createMBFolder(projectId));
+        if (!mb.measurements || !Array.isArray(mb.measurements)) {
+          return res.status(400).json({
+            success: false,
+            message: `MB ${mbIndex + 1}: measurements must be an array`,
+          });
         }
-        const mbFolder = projectFolders.get(projectId);
 
-        // Upload individual file
-        uploadPromises.push(
-          uploadMultipleFilesToFirebase([file], mbFolder).then(
-            (uploadedFiles) => ({
-              index: i,
-              uploadedFile: uploadedFiles[0],
-              projectId,
-            })
-          )
-        );
+        for (let mIndex = 0; mIndex < mb.measurements.length; mIndex++) {
+          const file = req.files[fileIndex];
+
+          if (!file) {
+            return res.status(400).json({
+              success: false,
+              message: `Missing file for MB ${mbIndex + 1}, Measurement ${
+                mIndex + 1
+              }`,
+            });
+          }
+
+          uploadPromises.push(
+            uploadMultipleFilesToFirebase([file], mbFolder).then(
+              (uploadedFiles) => ({
+                mbIndex,
+                measurementIndex: mIndex,
+                uploadedFile: uploadedFiles[0],
+              })
+            )
+          );
+
+          fileIndex++;
+        }
       }
 
       // Wait for all uploads to complete
       const uploadResults = await Promise.all(uploadPromises);
 
-      // Process uploaded files and attach to measurement books data
-      uploadResults.forEach(({ index, uploadedFile }) => {
-        measurementBooks[index].uploadedFile = {
+      // Attach uploaded file data to corresponding measurements
+      uploadResults.forEach(({ mbIndex, measurementIndex, uploadedFile }) => {
+        const measurement =
+          measurementBooks[mbIndex].measurements[measurementIndex];
+
+        measurement.uploadedFile = {
           fileName: uploadedFile.fileName,
           originalName: uploadedFile.originalName,
           downloadURL: uploadedFile.downloadURL,
@@ -291,8 +226,6 @@ export const mbBatchFileUpload = async (req, res, next) => {
 
 /**
  * Create folder path for MB files
- * @param {string} projectId - Project ID
- * @returns {string} - Complete folder path
  */
 const createMBFolder = (projectId) => {
   const dateFolder = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
@@ -321,9 +254,9 @@ const handleMBUploadErrors = (error, req, res, next) => {
       case "LIMIT_FILE_COUNT":
         return res.status(400).json({
           success: false,
-          message: "Too many files. Maximum 50 files allowed for batch upload.",
+          message: "Too many files. Maximum 500 files allowed.",
           details: {
-            maxFiles: 50,
+            maxFiles: 500,
             errorCode: "TOO_MANY_FILES",
           },
         });
@@ -331,11 +264,9 @@ const handleMBUploadErrors = (error, req, res, next) => {
       case "LIMIT_UNEXPECTED_FILE":
         return res.status(400).json({
           success: false,
-          message:
-            'Use "mbFile" for single upload or "mbFiles" for batch upload.',
+          message: 'Use "mbFiles" field for file uploads.',
           details: {
-            singleField: "mbFile",
-            batchField: "mbFiles",
+            expectedField: "mbFiles",
             errorCode: "UNEXPECTED_FIELD",
           },
         });
@@ -385,61 +316,18 @@ const handleMBUploadErrors = (error, req, res, next) => {
 };
 
 /**
- * Cleanup middleware for MB files in case of errors (Single)
- */
-export const cleanupMBFile = async (req, res, next) => {
-  const originalSend = res.send;
-  const originalJson = res.json;
-
-  // Override response methods to detect errors
-  res.send = function (data) {
-    if (res.statusCode >= 400 && req.body.uploadedFile) {
-      // Error response, cleanup uploaded file
-      deleteMultipleFilesFromFirebase([req.body.uploadedFile.filePath]).catch(
-        (error) => {
-          console.error(
-            "Error cleaning up MB file after error response:",
-            error
-          );
-        }
-      );
-    }
-    originalSend.call(this, data);
-  };
-
-  res.json = function (data) {
-    if (res.statusCode >= 400 && req.body.uploadedFile) {
-      // Error response, cleanup uploaded file
-      deleteMultipleFilesFromFirebase([req.body.uploadedFile.filePath]).catch(
-        (error) => {
-          console.error(
-            "Error cleaning up MB file after error response:",
-            error
-          );
-        }
-      );
-    }
-    originalJson.call(this, data);
-  };
-
-  next();
-};
-
-/**
- * Cleanup middleware for MB files in case of errors (Batch)
+ * Cleanup middleware for MB files in case of errors
  */
 export const cleanupMBBatchFiles = async (req, res, next) => {
   const originalSend = res.send;
   const originalJson = res.json;
 
-  // Override response methods to detect errors
   res.send = function (data) {
     if (
       res.statusCode >= 400 &&
       req.uploadedFilePaths &&
       req.uploadedFilePaths.length > 0
     ) {
-      // Error response, cleanup uploaded files
       deleteMultipleFilesFromFirebase(req.uploadedFilePaths).catch((error) => {
         console.error(
           "Error cleaning up MB batch files after error response:",
@@ -456,7 +344,6 @@ export const cleanupMBBatchFiles = async (req, res, next) => {
       req.uploadedFilePaths &&
       req.uploadedFilePaths.length > 0
     ) {
-      // Error response, cleanup uploaded files
       deleteMultipleFilesFromFirebase(req.uploadedFilePaths).catch((error) => {
         console.error(
           "Error cleaning up MB batch files after error response:",
@@ -468,37 +355,4 @@ export const cleanupMBBatchFiles = async (req, res, next) => {
   };
 
   next();
-};
-
-/**
- * Middleware to process measurementBooks data and convert single MB to array format
- */
-export const processMBData = (req, res, next) => {
-  try {
-    // If measurementBooks is not provided, assume single MB format
-    if (!req.body.measurementBooks) {
-      // Convert single MB data to array format
-      const singleMB = {
-        project: req.body.project,
-        description: req.body.description,
-        remarks: req.body.remarks,
-        uploadedFile: req.body.uploadedFile,
-      };
-
-      req.body.measurementBooks = [singleMB];
-      req.isSingleMB = true; // Flag to indicate this was originally single MB
-    } else {
-      req.isSingleMB = false;
-    }
-
-    next();
-  } catch (error) {
-    console.error("Error processing MB data:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error processing measurement book data",
-      details:
-        process.env.NODE_ENV === "development" ? error.message : undefined,
-    });
-  }
 };
