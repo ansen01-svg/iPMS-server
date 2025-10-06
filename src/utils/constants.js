@@ -114,7 +114,6 @@ export const typeOfWork = [
   "Land Development",
   "Landscaping",
   "Maintenance Works",
-  "Upgradation Works",
   "Other developments",
 ];
 

@@ -1333,7 +1333,7 @@ projectSchema.methods.changeEditableStatus = function (
   reason = ""
 ) {
   // Validate that only certain roles can change this
-  const allowedRoles = ["ADMIN", "SUPERADMIN"];
+  const allowedRoles = ["MD", "ADMIN", "SUPERADMIN"];
   if (!allowedRoles.includes(userInfo.role)) {
     throw new Error(
       `Only ${allowedRoles.join(", ")} can change project editable status`

@@ -56,7 +56,7 @@ import {
 
 // Authentication middleware
 import {
-  requireAdmin,
+  requireBothMdAndAdmin,
   requireJe,
   requireLogin,
 } from "../middlewares/auth.middleware.js";
@@ -143,14 +143,14 @@ router.get("/:projectId/documents", getProjectDocuments);
 // Route to update project editable status
 router.patch(
   "/:projectId/editable-status",
-  requireAdmin(),
+  requireBothMdAndAdmin(),
   updateEditableStatus
 );
 
 // Route to get editable status history
 router.get(
   "/:projectId/editable-status/history",
-  requireAdmin(),
+  requireBothMdAndAdmin(),
   getEditableStatusHistory
 );
 
