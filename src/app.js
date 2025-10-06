@@ -71,13 +71,6 @@ process.on("unhandledRejection", (err) => {
 
 // Security and request parsing
 app.use(cors(corsOptions));
-app.use(
-  rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: 100, // Limit each IP to 100 requests per windowMs
-    message: "Too many requests from this IP, please try again later.",
-  })
-);
 app.use(helmet()); // Set security HTTP headers
 app.use(morgan("tiny")); // API logging for development
 
@@ -113,7 +106,16 @@ app.get("/", (req, res) => {
 });
 
 // API routes
-app.use("/api/auth", authRoute);
+app.use(
+  "/api/auth",
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 25,
+    message: "Too many authentication attempts, please try again later.",
+    skipSuccessfulRequests: true, // Don't count successful logins
+  }),
+  authRoute
+);
 app.use("/api/user", userRoute);
 app.use("/api/project", projectRoute);
 app.use("/api/archive-project", archiveProjectRoute);

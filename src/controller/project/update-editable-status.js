@@ -13,8 +13,8 @@ const updateEditableStatus = async (req, res) => {
       });
     }
 
-    // Validate user role - only AEE, CE, and MD can change editable status
-    const allowedRoles = ["ADMIN", "SUPERADMIN"];
+    // Validate user role - only ADMIN and MD can change editable status
+    const allowedRoles = ["MD", "ADMIN", "SUPERADMIN"];
     if (!allowedRoles.includes(req.user.designation)) {
       return res.status(403).json({
         success: false,
