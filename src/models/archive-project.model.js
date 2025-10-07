@@ -193,12 +193,13 @@ const financialProgressUpdateSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+// Schema for raised queries related to the project
 const raisedQuerySchema = new mongoose.Schema(
   {
     queryId: {
       type: String,
       required: [true, "Query ID is required"],
-      unique: true,
       index: true,
     },
     projectId: {
@@ -371,6 +372,7 @@ const raisedQuerySchema = new mongoose.Schema(
   }
 );
 
+// Main schema for archived projects
 const archiveProjectSchema = new mongoose.Schema(
   {
     projectId: {
