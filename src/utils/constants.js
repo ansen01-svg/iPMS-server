@@ -105,7 +105,7 @@ export const typeOfWork = [
   "Building Works",
   "Road Constuction",
   "Bridge Constuction",
-  "Repairing/Renovation Works",
+  "Repairing & Renovation Works",
   "Upgradation Works",
   "Water Supply",
   "Internal Electrification",
