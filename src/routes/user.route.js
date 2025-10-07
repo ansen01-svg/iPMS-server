@@ -9,8 +9,8 @@ import {
 import { requireAdmin, requireLogin } from "../middlewares/auth.middleware.js";
 import {
   cleanupAvatarFile,
-  uploadAvatarToFirebase,
-} from "../middlewares/avatar-upload.middleware.js";
+  uploadAvatarToS3,
+} from "../middlewares/s3-bucket-file-upload/avatar-upload.middleware.js";
 
 const router = express.Router();
 
@@ -24,7 +24,7 @@ router.get("/profile", requireLogin(), getUserProfile);
 router.put(
   "/profile",
   requireLogin(),
-  uploadAvatarToFirebase,
+  uploadAvatarToS3,
   cleanupAvatarFile,
   updateUserProfile
 );

@@ -1,9 +1,10 @@
 import multer from "multer";
 import {
-  deleteMultipleFilesFromFirebase,
-  uploadMultipleFilesToFirebase,
+  deleteMultipleFilesFromS3,
+  processS3Files,
+  uploadMultipleFilesToS3,
   validateFile,
-} from "../utils/firebase.js";
+} from "../../utils/s3.js";
 
 const storage = multer.memoryStorage();
 
@@ -59,8 +60,11 @@ const mbBatchUpload = multer({
 });
 
 /**
- * Middleware for uploading multiple MB files to Firebase Storage
+ * Middleware for uploading multiple MB files to AWS S3
  * Handles multiple measurement books, each with multiple measurement items
+ *
+ * Files are uploaded to: measurement-books/{projectId}/{YYYY-MM-DD}/
+ * Example: measurement-books/project-123/2025-10-07/1696234567890-a1b2c3d4.pdf
  */
 export const mbBatchFileUpload = async (req, res, next) => {
   const multerMiddleware = mbBatchUpload.array("mbFiles", 500);
@@ -126,7 +130,7 @@ export const mbBatchFileUpload = async (req, res, next) => {
         `Processing ${req.files.length} files for ${measurementBooks.length} measurement book(s)`
       );
 
-      // Upload all files to Firebase
+      // Upload all files to S3
       const uploadPromises = [];
       let fileIndex = 0;
 
@@ -134,6 +138,8 @@ export const mbBatchFileUpload = async (req, res, next) => {
         const mb = measurementBooks[mbIndex];
         const projectId = mb.project || "general";
         const mbFolder = createMBFolder(projectId);
+
+        console.log(`Using S3 folder: ${mbFolder} for MB ${mbIndex + 1}`);
 
         if (!mb.measurements || !Array.isArray(mb.measurements)) {
           return res.status(400).json({
@@ -155,13 +161,11 @@ export const mbBatchFileUpload = async (req, res, next) => {
           }
 
           uploadPromises.push(
-            uploadMultipleFilesToFirebase([file], mbFolder).then(
-              (uploadedFiles) => ({
-                mbIndex,
-                measurementIndex: mIndex,
-                uploadedFile: uploadedFiles[0],
-              })
-            )
+            uploadMultipleFilesToS3([file], mbFolder).then((uploadedFiles) => ({
+              mbIndex,
+              measurementIndex: mIndex,
+              uploadedFile: uploadedFiles[0],
+            }))
           );
 
           fileIndex++;
@@ -171,38 +175,48 @@ export const mbBatchFileUpload = async (req, res, next) => {
       // Wait for all uploads to complete
       const uploadResults = await Promise.all(uploadPromises);
 
-      // Attach uploaded file data to corresponding measurements
-      uploadResults.forEach(({ mbIndex, measurementIndex, uploadedFile }) => {
-        const measurement =
-          measurementBooks[mbIndex].measurements[measurementIndex];
+      // Process uploaded files to add download URLs
+      const processedResults = uploadResults.map((result) => ({
+        ...result,
+        uploadedFile: processS3Files([result.uploadedFile])[0],
+      }));
 
-        measurement.uploadedFile = {
-          fileName: uploadedFile.fileName,
-          originalName: uploadedFile.originalName,
-          downloadURL: uploadedFile.downloadURL,
-          filePath: uploadedFile.filePath,
-          fileSize: uploadedFile.fileSize,
-          mimeType: uploadedFile.mimeType,
-          fileType: uploadedFile.mimeType.startsWith("image/")
-            ? "image"
-            : "document",
-        };
-      });
+      // Attach uploaded file data to corresponding measurements
+      processedResults.forEach(
+        ({ mbIndex, measurementIndex, uploadedFile }) => {
+          const measurement =
+            measurementBooks[mbIndex].measurements[measurementIndex];
+
+          measurement.uploadedFile = {
+            fileName: uploadedFile.fileName,
+            originalName: uploadedFile.originalName,
+            downloadURL: uploadedFile.downloadURL,
+            filePath: uploadedFile.filePath,
+            fileSize: uploadedFile.size,
+            mimeType: uploadedFile.mimetype,
+            fileType: uploadedFile.mimetype.startsWith("image/")
+              ? "image"
+              : "document",
+          };
+        }
+      );
 
       // Attach processed data to request body
       req.body.measurementBooks = measurementBooks;
-      req.uploadedFilePaths = uploadResults.map(
+      req.uploadedFilePaths = processedResults.map(
         (result) => result.uploadedFile.filePath
       );
 
-      console.log(`Successfully uploaded ${uploadResults.length} MB files`);
+      console.log(
+        `Successfully uploaded ${processedResults.length} MB files to S3`
+      );
       next();
     } catch (error) {
-      console.error("Error uploading MB files to Firebase:", error);
+      console.error("Error uploading MB files to S3:", error);
 
       // Cleanup any uploaded files if there was an error
       if (req.uploadedFilePaths && req.uploadedFilePaths.length > 0) {
-        deleteMultipleFilesFromFirebase(req.uploadedFilePaths).catch(
+        deleteMultipleFilesFromS3(req.uploadedFilePaths).catch(
           (cleanupError) => {
             console.error(
               "Error cleaning up files after upload failure:",
@@ -217,7 +231,7 @@ export const mbBatchFileUpload = async (req, res, next) => {
         message: "Failed to upload measurement book files to cloud storage",
         details: {
           error: error.message,
-          errorCode: "FIREBASE_BATCH_UPLOAD_ERROR",
+          errorCode: "S3_BATCH_UPLOAD_ERROR",
         },
       });
     }
@@ -225,7 +239,15 @@ export const mbBatchFileUpload = async (req, res, next) => {
 };
 
 /**
- * Create folder path for MB files
+ * Create folder path for MB files in S3
+ *
+ * Folder structure: measurement-books/{projectId}/{YYYY-MM-DD}
+ *
+ * Examples:
+ * - measurement-books/project-123/2025-10-07
+ * - measurement-books/general/2025-10-07
+ *
+ * Final file path will be: measurement-books/{projectId}/{YYYY-MM-DD}/{timestamp}-{random}.{ext}
  */
 const createMBFolder = (projectId) => {
   const dateFolder = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
@@ -328,7 +350,7 @@ export const cleanupMBBatchFiles = async (req, res, next) => {
       req.uploadedFilePaths &&
       req.uploadedFilePaths.length > 0
     ) {
-      deleteMultipleFilesFromFirebase(req.uploadedFilePaths).catch((error) => {
+      deleteMultipleFilesFromS3(req.uploadedFilePaths).catch((error) => {
         console.error(
           "Error cleaning up MB batch files after error response:",
           error
@@ -344,7 +366,7 @@ export const cleanupMBBatchFiles = async (req, res, next) => {
       req.uploadedFilePaths &&
       req.uploadedFilePaths.length > 0
     ) {
-      deleteMultipleFilesFromFirebase(req.uploadedFilePaths).catch((error) => {
+      deleteMultipleFilesFromS3(req.uploadedFilePaths).catch((error) => {
         console.error(
           "Error cleaning up MB batch files after error response:",
           error

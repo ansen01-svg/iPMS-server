@@ -4,7 +4,7 @@ import {
   processFirebaseFiles,
   uploadMultipleFilesToFirebase,
   validateFile,
-} from "../utils/firebase.js";
+} from "../../utils/firebase.js";
 
 // Configure multer for avatar upload (memory storage)
 const storage = multer.memoryStorage();

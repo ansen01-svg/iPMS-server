@@ -39,7 +39,7 @@ import {
   requireLogin,
   requireOperator,
 } from "../middlewares/auth.middleware.js";
-import { createFileUploadMiddleware } from "../middlewares/project-files-upload.middleware.js";
+import { createFileUploadMiddleware } from "../middlewares/s3-bucket-file-upload/project-files-upload.middleware.js";
 
 // Validation middleware
 import {
@@ -60,7 +60,7 @@ import {
   validateFinancialProgressStatisticsQuery,
 } from "../middlewares/validate-archive-project-financial-progress.middleware.js";
 
-import { queryFileUploadMiddleware } from "../middlewares/query-file-upload.middleware.js";
+import { queryFileUploadMiddleware } from "../middlewares/s3-bucket-file-upload/query-file-upload.middleware.js";
 
 import {
   generateBulkProjectSummaryPDF,

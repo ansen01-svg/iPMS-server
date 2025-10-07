@@ -9,7 +9,7 @@ import { requireLogin } from "../middlewares/auth.middleware.js";
 import {
   cleanupMBBatchFiles,
   mbBatchFileUpload,
-} from "../middlewares/mb-file-upload.middleware.js";
+} from "../middlewares/s3-bucket-file-upload/mb-file-upload.middleware.js";
 import { completeMBValidation } from "../middlewares/validate-mb-data.js";
 
 const router = express.Router();

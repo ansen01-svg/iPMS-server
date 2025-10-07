@@ -62,7 +62,7 @@ import {
 } from "../middlewares/auth.middleware.js";
 
 // File upload middleware
-import { createFileUploadMiddleware } from "../middlewares/project-files-upload.middleware.js";
+import { createFileUploadMiddleware } from "../middlewares/s3-bucket-file-upload/project-files-upload.middleware.js";
 
 // Status validation middleware
 import {
@@ -91,7 +91,7 @@ import {
   validateFinancialProgressStatisticsQuery,
 } from "../middlewares/validate-project-progress-update.middleware.js";
 
-import { queryFileUploadMiddleware } from "../middlewares/query-file-upload.middleware.js";
+import { queryFileUploadMiddleware } from "../middlewares/s3-bucket-file-upload/query-file-upload.middleware.js";
 
 // Project model for utility routes
 import Project from "../models/project.model.js";
