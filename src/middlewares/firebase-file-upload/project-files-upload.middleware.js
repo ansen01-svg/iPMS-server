@@ -4,7 +4,7 @@ import {
   processFirebaseFiles,
   uploadMultipleFilesToFirebase,
   validateFile,
-} from "../utils/firebase.js";
+} from "../../utils/firebase.js";
 
 // Configure multer to store files in memory for Firebase upload
 const storage = multer.memoryStorage();

@@ -1,14 +1,12 @@
-// src/middlewares/query-file-upload.middleware.js
-
 import multer from "multer";
 import {
-  deleteMultipleFilesFromFirebase,
-  processFirebaseFiles,
-  uploadMultipleFilesToFirebase,
+  deleteMultipleFilesFromS3,
+  processS3Files,
+  uploadMultipleFilesToS3,
   validateFile,
-} from "../utils/firebase.js";
+} from "../../utils/s3.js";
 
-// Configure multer to store files in memory for Firebase upload
+// Configure multer to store files in memory for S3 upload
 const storage = multer.memoryStorage();
 
 // File filter function for query attachments
@@ -47,9 +45,16 @@ const upload = multer({
 });
 
 /**
- * Create contextual folder path for query files
+ * Create contextual folder path for query files in S3
+ *
+ * Folder structure: query-attachments/{queryId}/{YYYY-MM-DD}
+ *
+ * Examples:
+ * - query-attachments/query-123/2025-10-07
+ * - query-attachments/unknown/2025-10-07
+ *
  * @param {Object} req - Express request object
- * @returns {string} - Complete folder path
+ * @returns {string} - Complete S3 folder path
  */
 const createQueryFileFolder = (req) => {
   const queryId = req.params.queryId || "unknown";
@@ -59,7 +64,11 @@ const createQueryFileFolder = (req) => {
 };
 
 /**
- * Middleware for uploading query attachment files to Firebase Storage
+ * Middleware for uploading query attachment files to AWS S3
+ *
+ * Files are uploaded to: query-attachments/{queryId}/{YYYY-MM-DD}/
+ * Example: query-attachments/query-123/2025-10-07/1696234567890-a1b2c3d4.pdf
+ *
  * @param {string} fieldName - Form field name for files (default: "attachments")
  * @param {number} maxCount - Maximum number of files (default: 5)
  */
@@ -84,29 +93,40 @@ export const uploadQueryFiles = (fieldName = "attachments", maxCount = 5) => {
         const queryFolder = createQueryFileFolder(req);
 
         console.log(
-          `Uploading ${req.files.length} query files to Firebase folder: ${queryFolder}`
+          `Uploading ${req.files.length} query files to S3 folder: ${queryFolder}`
         );
 
-        // Upload files to Firebase
-        const uploadedFiles = await uploadMultipleFilesToFirebase(
+        // Upload files to S3
+        const uploadedFiles = await uploadMultipleFilesToS3(
           req.files,
           queryFolder
         );
 
-        // Process and attach to request
-        req.queryFiles = processFirebaseFiles(uploadedFiles);
+        // Process S3 files and map property names for database compatibility
+        const processedFiles = processS3Files(uploadedFiles);
+
+        // FIXED: Map S3 property names to database schema property names
+        req.queryFiles = processedFiles.map((file) => ({
+          fileName: file.fileName,
+          originalName: file.originalName || file.fileName,
+          downloadURL: file.downloadURL,
+          filePath: file.filePath,
+          fileSize: file.size || 0, // Map size -> fileSize
+          mimeType: file.mimetype, // Map mimetype -> mimeType
+          fileType: file.mimetype?.startsWith("image/") ? "image" : "document", // Add fileType
+        }));
 
         console.log(
-          `Successfully uploaded ${uploadedFiles.length} query files to Firebase`
+          `Successfully uploaded ${req.queryFiles.length} query files to S3`
         );
         next();
       } catch (error) {
-        console.error("Error uploading query files to Firebase:", error);
+        console.error("Error uploading query files to S3:", error);
 
         // Clean up any partially uploaded files
         if (req.queryFiles && req.queryFiles.length > 0) {
           const filePaths = req.queryFiles.map((f) => f.filePath);
-          deleteMultipleFilesFromFirebase(filePaths).catch((deleteError) => {
+          deleteMultipleFilesFromS3(filePaths).catch((deleteError) => {
             console.error(
               "Error cleaning up failed query uploads:",
               deleteError
@@ -119,7 +139,7 @@ export const uploadQueryFiles = (fieldName = "attachments", maxCount = 5) => {
           message: "Failed to upload query attachment files to cloud storage",
           details: {
             error: error.message,
-            errorCode: "FIREBASE_UPLOAD_ERROR",
+            errorCode: "S3_UPLOAD_ERROR",
           },
         });
       }
@@ -188,12 +208,15 @@ export const handleQueryUploadErrors = (error, req, res, next) => {
         errorCode: "INVALID_FILE_TYPE",
       },
     });
-  } else if (error && error.message.includes("Firebase")) {
+  } else if (
+    error &&
+    (error.message.includes("S3") || error.message.includes("AWS"))
+  ) {
     return res.status(500).json({
       success: false,
       message: "Cloud storage error occurred during query file upload.",
       details: {
-        errorCode: "FIREBASE_STORAGE_ERROR",
+        errorCode: "S3_STORAGE_ERROR",
         suggestion:
           "Please try again or contact administrator if the problem persists.",
       },
@@ -204,7 +227,7 @@ export const handleQueryUploadErrors = (error, req, res, next) => {
 };
 
 /**
- * Cleanup middleware to delete uploaded query files in case of subsequent errors
+ * Cleanup middleware to delete uploaded query files from S3 in case of subsequent errors
  */
 export const cleanupQueryFiles = async (req, res, next) => {
   const originalSend = res.send;
@@ -215,7 +238,7 @@ export const cleanupQueryFiles = async (req, res, next) => {
     if (res.statusCode >= 400 && req.queryFiles && req.queryFiles.length > 0) {
       // Error response, cleanup uploaded files
       const filePaths = req.queryFiles.map((f) => f.filePath);
-      deleteMultipleFilesFromFirebase(filePaths).catch((error) => {
+      deleteMultipleFilesFromS3(filePaths).catch((error) => {
         console.error(
           "Error cleaning up query files after error response:",
           error
@@ -229,7 +252,7 @@ export const cleanupQueryFiles = async (req, res, next) => {
     if (res.statusCode >= 400 && req.queryFiles && req.queryFiles.length > 0) {
       // Error response, cleanup uploaded files
       const filePaths = req.queryFiles.map((f) => f.filePath);
-      deleteMultipleFilesFromFirebase(filePaths).catch((error) => {
+      deleteMultipleFilesFromS3(filePaths).catch((error) => {
         console.error(
           "Error cleaning up query files after error response:",
           error
