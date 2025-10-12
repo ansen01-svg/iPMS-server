@@ -27,7 +27,7 @@ const connectDB = async (retries = 5) => {
       // Connection options
       const options = {
         maxPoolSize: 10, // Maximum number of connections
-        minPoolSize: 2, // Minimum connections to maintain
+        minPoolSize: 3, // Minimum connections to maintain
         serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of hanging
         socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
         family: 4, // Use IPv4, skip trying IPv6

@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
+    "seed:admin": "node scripts/seed-admin.js",
     "lint": "eslint ."
   },
   "keywords": [],
