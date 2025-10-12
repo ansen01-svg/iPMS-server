@@ -80,7 +80,7 @@ app.use(cookieParser());
 // Body parsers
 app.use(
   express.json({
-    limit: "10mb",
+    limit: "100mb",
     strict: true,
     type: "application/json",
   })
@@ -88,7 +88,7 @@ app.use(
 app.use(
   express.urlencoded({
     extended: true,
-    limit: "5mb",
+    limit: "50mb",
   })
 );
 app.use(express.static("./public"));
