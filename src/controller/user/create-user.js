@@ -157,12 +157,56 @@ const createUser = async (req, res) => {
         savedUser.email,
         "Your APTDCL Account Credentials",
         `
-          <h2>Welcome ${savedUser.fullName || ""}</h2>
-          <p>Your account has been created successfully.</p>
-          <p><strong>User ID:</strong> ${savedUser.userId}</p>
-          <p><strong>Temporary Password:</strong> ${plainPassword}</p>
-          <p>Please change your password after first login.</p>
-        `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>APTDCL Account Credentials</title>
+      </head>
+      <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
+        <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+          <div style="text-align: center; margin-bottom: 30px;">
+            <h1 style="color: #279eab; margin: 0; font-size: 28px;">APTDCL</h1>
+          </div>
+
+          <div style="text-align: center; margin-bottom: 30px;">
+            <h2 style="color: #333333; margin: 0 0 10px 0;">Welcome ${
+              savedUser.fullName || ""
+            }!</h2>
+            <p style="color: #666666; margin: 0; font-size: 16px;">Your account has been created successfully</p>
+          </div>
+
+          <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 30px;">
+            <p style="color: #333333; margin: 0 0 15px 0; font-size: 16px; text-align: center;">Your Account Credentials:</p>
+
+            <div style="margin-bottom: 15px;">
+              <p style="color: #666666; margin: 0 0 5px 0; font-size: 14px;">User ID:</p>
+              <p style="color: #279eab; margin: 0; font-size: 18px; font-weight: bold;">${
+                savedUser.userId
+              }</p>
+            </div>
+
+            <div style="margin-bottom: 15px;">
+              <p style="color: #666666; margin: 0 0 5px 0; font-size: 14px;">Temporary Password:</p>
+              <p style="color: #279eab; margin: 0; font-size: 18px; font-weight: bold; letter-spacing: 2px;">${plainPassword}</p>
+            </div>
+          </div>
+
+          <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; padding: 15px; margin-bottom: 20px;">
+            <p style="color: #856404; margin: 0; font-size: 14px;">
+              <strong>Important:</strong> Please change your password after first login for security purposes. Do not share your credentials with anyone.
+            </p>
+          </div>
+
+          <div style="text-align: center; color: #666666; font-size: 12px; border-top: 1px solid #eeeeee; padding-top: 20px;">
+            <p style="margin: 0;">If you didn't request this account, please contact support immediately.</p>
+            <p style="margin: 10px 0 0 0;">&copy; 2025 APTDCL. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `
       );
     } catch (mailError) {
       console.error(" Failed to send email:", mailError);
